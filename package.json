@@ -2,6 +2,11 @@
   "name": "mailuo",
   "private": true,
   "version": "0.1.0",
+  "description": "AI 驱动的桌面任务与知识管理应用",
+  "author": {
+    "name": "cccatbug",
+    "email": "92870869+cccatbug@users.noreply.github.com"
+  },
   "packageManager": "pnpm@9.4.0",
   "type": "module",
   "main": "./out/main/main.js",
