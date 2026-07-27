@@ -1,0 +1,255 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+    --font-heading: "Songti SC", "STSong", "Noto Serif SC", "Source Han Serif SC", serif;
+    --font-sans: 'Geist Variable', -apple-system, "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
+    --color-sidebar-ring: var(--sidebar-ring);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-primary: var(--sidebar-primary);
+    --color-sidebar-foreground: var(--sidebar-foreground);
+    --color-sidebar: var(--sidebar);
+    --color-chart-5: var(--chart-5);
+    --color-chart-4: var(--chart-4);
+    --color-chart-3: var(--chart-3);
+    --color-chart-2: var(--chart-2);
+    --color-chart-1: var(--chart-1);
+    --color-ring: var(--ring);
+    --color-input: var(--input);
+    --color-border: var(--border);
+    --color-destructive: var(--destructive);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-accent: var(--accent);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-muted: var(--muted);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-secondary: var(--secondary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-primary: var(--primary);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-popover: var(--popover);
+    --color-card-foreground: var(--card-foreground);
+    --color-card: var(--card);
+    --color-foreground: var(--foreground);
+    --color-background: var(--background);
+    --color-status-done: var(--status-done);
+    --color-status-doing: var(--status-doing);
+    --color-status-todo: var(--status-todo);
+    --radius-sm: calc(var(--radius) * 0.6);
+    --radius-md: calc(var(--radius) * 0.8);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) * 1.4);
+    --radius-2xl: calc(var(--radius) * 1.8);
+    --radius-3xl: calc(var(--radius) * 2.2);
+    --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* 脉络 · 米纸为底，松墨为骨，朱砂点睛 */
+:root {
+    --background: oklch(0.955 0.016 95);
+    --foreground: oklch(0.28 0.012 105);
+    --card: oklch(0.99 0.006 95);
+    --card-foreground: oklch(0.28 0.012 105);
+    --popover: oklch(0.99 0.006 95);
+    --popover-foreground: oklch(0.28 0.012 105);
+    --primary: oklch(0.545 0.135 28);
+    --primary-foreground: oklch(0.98 0.008 90);
+    --secondary: oklch(0.925 0.018 95);
+    --secondary-foreground: oklch(0.32 0.012 105);
+    --muted: oklch(0.925 0.018 95);
+    --muted-foreground: oklch(0.52 0.016 100);
+    --accent: oklch(0.915 0.02 95);
+    --accent-foreground: oklch(0.28 0.012 105);
+    --destructive: oklch(0.545 0.155 28);
+    --border: oklch(0.885 0.02 95);
+    --input: oklch(0.885 0.02 95);
+    --ring: oklch(0.545 0.135 28 / 55%);
+    --chart-1: oklch(0.5 0.07 160);
+    --chart-2: oklch(0.55 0.08 250);
+    --chart-3: oklch(0.545 0.135 28);
+    --chart-4: oklch(0.65 0.1 85);
+    --chart-5: oklch(0.5 0.08 300);
+    --radius: 0.625rem;
+    --sidebar: oklch(0.938 0.015 95);
+    --sidebar-foreground: oklch(0.28 0.012 105);
+    --sidebar-primary: oklch(0.545 0.135 28);
+    --sidebar-primary-foreground: oklch(0.98 0.008 90);
+    --sidebar-accent: oklch(0.88 0.02 95 / 65%);
+    --sidebar-accent-foreground: oklch(0.28 0.012 105);
+    --sidebar-border: oklch(0.885 0.02 95);
+    --sidebar-ring: oklch(0.545 0.135 28 / 60%);
+    --status-done: oklch(0.55 0.07 160);
+    --status-doing: oklch(0.65 0.1 85);
+    --status-todo: oklch(0.62 0.014 100);
+    /* 图表专用状态色 —— 已通过 CVD/对比度验证（validate_palette，light surface #FAF8F1） */
+    --viz-done: #2f8a55;
+    --viz-doing: #b08415;
+    --viz-ready: #4c74b0;
+    --viz-blocked: #b5483a;
+}
+
+.dark {
+    --background: oklch(0.205 0.012 160);
+    --foreground: oklch(0.915 0.014 95);
+    --card: oklch(0.245 0.013 160);
+    --card-foreground: oklch(0.915 0.014 95);
+    --popover: oklch(0.245 0.013 160);
+    --popover-foreground: oklch(0.915 0.014 95);
+    --primary: oklch(0.63 0.125 30);
+    --primary-foreground: oklch(0.98 0.008 90);
+    --secondary: oklch(0.29 0.013 160);
+    --secondary-foreground: oklch(0.915 0.014 95);
+    --muted: oklch(0.29 0.013 160);
+    --muted-foreground: oklch(0.68 0.014 100);
+    --accent: oklch(0.31 0.014 160);
+    --accent-foreground: oklch(0.915 0.014 95);
+    --destructive: oklch(0.63 0.145 28);
+    --border: oklch(1 0 0 / 10%);
+    --input: oklch(1 0 0 / 14%);
+    --ring: oklch(0.63 0.125 30 / 55%);
+    --chart-1: oklch(0.62 0.07 160);
+    --chart-2: oklch(0.62 0.08 250);
+    --chart-3: oklch(0.63 0.125 30);
+    --chart-4: oklch(0.7 0.1 85);
+    --chart-5: oklch(0.6 0.08 300);
+    --sidebar: oklch(0.185 0.012 160);
+    --sidebar-foreground: oklch(0.915 0.014 95);
+    --sidebar-primary: oklch(0.63 0.125 30);
+    --sidebar-primary-foreground: oklch(0.98 0.008 90);
+    --sidebar-accent: oklch(1 0 0 / 7%);
+    --sidebar-accent-foreground: oklch(0.94 0.015 95);
+    --sidebar-border: oklch(1 0 0 / 10%);
+    --sidebar-ring: oklch(0.63 0.125 30 / 60%);
+    --status-done: oklch(0.65 0.07 160);
+    --status-doing: oklch(0.72 0.1 85);
+    --status-todo: oklch(0.58 0.014 100);
+    /* 图表专用状态色 —— 深色面验证通过（dark surface #262C28） */
+    --viz-done: #3b9e6d;
+    --viz-doing: #b7821d;
+    --viz-ready: #6487cc;
+    --viz-blocked: #c6543e;
+}
+
+/* Electron 窗口拖动区 */
+.app-drag {
+  -webkit-app-region: drag;
+}
+.app-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    }
+  body {
+    @apply bg-background text-foreground;
+    user-select: none;
+    }
+  html {
+    @apply font-sans;
+    /* 全局密度：以 14px 为基准（rem 体系整体收紧一档） */
+    font-size: 14px;
+    }
+  html, body, #root {
+    height: 100%;
+    overflow: hidden;
+    }
+  input, textarea, [contenteditable] {
+    user-select: text;
+    }
+}
+
+/* 聊天气泡内 markdown 紧凑排版 */
+.mailuo-md > *:first-child { margin-top: 0; }
+.mailuo-md > *:last-child { margin-bottom: 0; }
+.mailuo-md p { margin: 0.4em 0; }
+.mailuo-md ul, .mailuo-md ol { margin: 0.4em 0; padding-left: 1.4em; }
+.mailuo-md ul { list-style: disc; }
+.mailuo-md ol { list-style: decimal; }
+.mailuo-md li { margin: 0.15em 0; }
+.mailuo-md h1, .mailuo-md h2, .mailuo-md h3, .mailuo-md h4 {
+  margin: 0.7em 0 0.3em;
+  font-weight: 600;
+}
+.mailuo-md h1 { font-size: 1.1em; }
+.mailuo-md h2 { font-size: 1.05em; }
+.mailuo-md h3, .mailuo-md h4 { font-size: 1em; }
+.mailuo-md hr { margin: 0.6em 0; border-color: var(--border); }
+.mailuo-md strong { font-weight: 600; }
+
+/* dockview 主题对齐（浅/深均以语义 token 驱动） */
+.dockview-theme-light,
+.dockview-theme-dark {
+  --dv-background-color: var(--background);
+  --dv-group-view-background-color: var(--background);
+  --dv-tabs-and-actions-container-background-color: var(--sidebar);
+  --dv-tabs-and-actions-container-height: 36px;
+  --dv-tabs-and-actions-container-font-size: 12px;
+  --dv-activegroup-visiblepanel-tab-background-color: var(--background);
+  --dv-activegroup-hiddenpanel-tab-background-color: transparent;
+  --dv-inactivegroup-visiblepanel-tab-background-color: transparent;
+  --dv-inactivegroup-hiddenpanel-tab-background-color: transparent;
+  --dv-activegroup-visiblepanel-tab-color: var(--foreground);
+  --dv-activegroup-hiddenpanel-tab-color: var(--muted-foreground);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--muted-foreground);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--muted-foreground);
+  --dv-tab-divider-color: transparent;
+  --dv-separator-border: var(--border);
+  --dv-paneview-active-outline-color: var(--ring);
+  --dv-drag-over-background-color: color-mix(in oklch, var(--primary) 12%, transparent);
+  --dv-drag-over-border-color: var(--primary);
+  --dv-floating-box-shadow: 0 12px 40px oklch(0 0 0 / 22%);
+  --dv-tab-close-icon-color: var(--muted-foreground);
+  --dv-icon-hover-background-color: var(--accent);
+  --dv-floating-titlebar-background-color: var(--sidebar);
+  --dv-floating-titlebar-color: var(--foreground);
+  --dv-group-border-color: var(--border);
+}
+.dv-tab {
+  border-radius: 6px 6px 0 0;
+}
+
+/* xyflow 主题对齐 */
+.react-flow {
+  --xy-background-color: transparent;
+  --xy-edge-stroke: var(--border);
+  --xy-edge-stroke-selected: var(--primary);
+  --xy-attribution-background-color: transparent;
+}
+.react-flow__edge.blocking .react-flow__edge-path {
+  stroke: var(--primary);
+  stroke-dasharray: 6 4;
+  opacity: 0.8;
+}
+.react-flow__edge.done-edge .react-flow__edge-path {
+  opacity: 0.45;
+}
+.react-flow__controls {
+  box-shadow: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.react-flow__controls-button {
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  color: var(--foreground);
+  fill: var(--foreground);
+}
+.react-flow__controls-button:hover {
+  background: var(--accent);
+}
+.react-flow__minimap {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: 0 2px 10px oklch(0 0 0 / 8%);
+}

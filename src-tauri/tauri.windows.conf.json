@@ -1,0 +1,14 @@
+{
+  "app": {
+    "windows": [
+      {
+        "title": "脉络 · Màiluò",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 980,
+        "minHeight": 620,
+        "decorations": false
+      }
+    ]
+  }
+}
