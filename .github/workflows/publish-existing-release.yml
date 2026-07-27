@@ -1,0 +1,75 @@
+name: Publish existing build to Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag, for example v0.1.0"
+        required: true
+        type: string
+      run_id:
+        description: "Successful packaging workflow run ID"
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: publish-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish_release:
+    name: Publish ${{ inputs.tag }}
+    runs-on: ubuntu-latest
+    env:
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ inputs.tag }}
+
+    steps:
+      - name: Download packaged installers
+        uses: actions/download-artifact@v8
+        with:
+          pattern: mailuo-*
+          path: release-assets
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.run_id }}
+
+      - name: Validate release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! compgen -G "release-assets/*" >/dev/null; then
+            echo "No packaged installers were found in run ${{ inputs.run_id }}." >&2
+            exit 1
+          fi
+
+          ls -lh release-assets
+
+      - name: Create release and upload installers
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release-assets/* --clobber
+            exit 0
+          fi
+
+          RELEASE_FLAGS=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            RELEASE_FLAGS+=(--prerelease)
+          fi
+
+          gh release create "$RELEASE_TAG" release-assets/* \
+            --verify-tag \
+            --title "脉络 $RELEASE_TAG" \
+            --generate-notes \
+            "${RELEASE_FLAGS[@]}"
