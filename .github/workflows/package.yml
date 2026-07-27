@@ -214,6 +214,7 @@ jobs:
     permissions:
       contents: write
     env:
+      GH_REPO: ${{ github.repository }}
       RELEASE_TAG: ${{ needs.prepare_release.outputs.tag || github.ref_name }}
 
     steps:
