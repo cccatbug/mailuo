@@ -3,6 +3,7 @@ productName: 脉络
 directories:
   buildResources: build
   output: release
+artifactName: Mailuo-${version}-${os}-${arch}.${ext}
 files:
   - out/**
 asarUnpack:
@@ -21,4 +22,5 @@ linux:
   icon: build/icon.png
   target:
     - AppImage
+    - deb
 npmRebuild: false
