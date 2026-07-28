@@ -1,0 +1,117 @@
+import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  AiConfigStore,
+  AiConfigValidationError,
+  AiConfigWriteConflictError,
+  MailuoCredentialStore,
+} from "./ai-config-store";
+import {
+  createDefaultAiConfig,
+  runtimeProviderId,
+  type AiConfigV1,
+} from "../src/shared/ai-config";
+
+const roots: string[] = [];
+
+async function tempRoot(): Promise<string> {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mailuo-ai-config-"));
+  roots.push(root);
+  return root;
+}
+
+afterEach(async () => {
+  const { rm } = await import("node:fs/promises");
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true })));
+});
+
+describe("AiConfigStore", () => {
+  it("returns an unconfigured V1 document with built-in context profiles when config.json is missing", async () => {
+    const store = new AiConfigStore(await tempRoot());
+
+    const snapshot = await store.load();
+
+    expect(snapshot.etag).toBeNull();
+    expect(snapshot.config.version).toBe(1);
+    expect(snapshot.config.providers).toEqual([]);
+    expect(snapshot.config.contextProfiles.map((profile) => profile.name)).toEqual([
+      "助手完整",
+      "任务精简",
+    ]);
+  });
+
+  it("rejects stale etags instead of overwriting an externally edited file", async () => {
+    const root = await tempRoot();
+    const store = new AiConfigStore(root);
+    const initial = await store.save(createDefaultAiConfig(), null);
+    const file = path.join(root, "config.json");
+    await writeFile(file, `${await readFile(file, "utf8")}\n`, "utf8");
+
+    await expect(store.save(initial.config, initial.etag)).rejects.toBeInstanceOf(
+      AiConfigWriteConflictError
+    );
+  });
+
+  it("rejects broken route references without replacing the last valid file", async () => {
+    const root = await tempRoot();
+    const store = new AiConfigStore(root);
+    const initial = await store.save(createDefaultAiConfig(), null);
+    const invalid = structuredClone(initial.config) as AiConfigV1;
+    invalid.routes.assistant.model = {
+      providerId: "a9173512-b61c-4b13-bfe2-f42ea09575e1",
+      modelId: "missing",
+    };
+
+    await expect(store.save(invalid, initial.etag)).rejects.toBeInstanceOf(
+      AiConfigValidationError
+    );
+    expect(JSON.parse(await readFile(path.join(root, "config.json"), "utf8"))).toEqual(
+      initial.config
+    );
+  });
+
+  it("surfaces bad JSON and unknown versions without replacing the file", async () => {
+    const root = await tempRoot();
+    const store = new AiConfigStore(root);
+    const file = path.join(root, "config.json");
+    await writeFile(file, '{"version":2}', "utf8");
+
+    await expect(store.load()).rejects.toBeInstanceOf(AiConfigValidationError);
+    expect(await readFile(file, "utf8")).toBe('{"version":2}');
+
+    await writeFile(file, "{broken", "utf8");
+    await expect(store.load()).rejects.toBeInstanceOf(AiConfigValidationError);
+    expect(await readFile(file, "utf8")).toBe("{broken");
+  });
+});
+
+describe("MailuoCredentialStore", () => {
+  it("stores only pi-compatible credentials in auth.json with 0600 permissions", async () => {
+    const root = await tempRoot();
+    const credentials = new MailuoCredentialStore(path.join(root, "auth.json"));
+    const providerId = runtimeProviderId(
+      "a9173512-b61c-4b13-bfe2-f42ea09575e1"
+    );
+
+    await credentials.modify(providerId, async () => ({
+      type: "api_key",
+      key: "secret-key",
+      env: { MAILUO_HEADER_X_GATEWAY_KEY: "header-secret" },
+    }));
+
+    const file = path.join(root, "auth.json");
+    expect(JSON.parse(await readFile(file, "utf8"))).toEqual({
+      [providerId]: {
+        type: "api_key",
+        key: "secret-key",
+        env: { MAILUO_HEADER_X_GATEWAY_KEY: "header-secret" },
+      },
+    });
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    expect(await credentials.list()).toEqual([
+      { providerId, type: "api_key" },
+    ]);
+  });
+});

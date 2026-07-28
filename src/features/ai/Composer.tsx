@@ -13,7 +13,6 @@ import {
   FileImage,
   FileText,
   Paperclip,
-  PlugZap,
   Send,
   Settings2,
   SlashSquare,
@@ -35,10 +34,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { bridge } from "@/lib/bridge";
-import { runAgent } from "@/lib/ai";
 import { useAppStore } from "@/store/useAppStore";
 import type { Task } from "@/types";
 import type { AssistantContextUsage } from "@/shared/assistant";
+import type {
+  AiModelRef,
+  EnabledModelSummary,
+} from "@/shared/ai-config";
 import {
   prepareBrowserAttachments,
   releaseAttachment,
@@ -67,13 +69,6 @@ export const SLASH_SKILLS: SlashSkill[] = [
       "基于当前任务快照做一次可视化分析：选择最合适的图表展示进度、构成或风险，并先指出最值得关注的结论。",
   },
 ];
-
-interface ModelInfo {
-  provider: string;
-  id: string;
-  name: string;
-  reasoning: boolean;
-}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -139,11 +134,15 @@ export function Composer({
   tasks,
   busy,
   contextUsage,
+  modelOverride,
+  onModelOverrideChange,
   onSend,
 }: {
   tasks: Task[];
   busy: boolean;
   contextUsage?: AssistantContextUsage;
+  modelOverride?: AiModelRef;
+  onModelOverrideChange: (model: AiModelRef | null) => void;
   onSend: (
     text: string,
     mentionedIds: string[],
@@ -151,8 +150,6 @@ export function Composer({
     attachments: ComposerAttachment[]
   ) => Promise<boolean>;
 }) {
-  const settings = useAppStore((s) => s.settings);
-  const setSettings = useAppStore((s) => s.setSettings);
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
 
   const [input, setInput] = useState("");
@@ -162,9 +159,8 @@ export function Composer({
   const [usedSkills, setUsedSkills] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
-  const [models, setModels] = useState<ModelInfo[] | null>(null);
+  const [models, setModels] = useState<EnabledModelSummary[] | null>(null);
   const [modelQuery, setModelQuery] = useState("");
-  const [testing, setTesting] = useState(false);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [preparingAttachments, setPreparingAttachments] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -385,24 +381,13 @@ export function Composer({
     }
   };
 
-  const testConnection = async () => {
-    setTesting(true);
-    try {
-      const reply = await runAgent({
-        system: "你是连通性测试助手。",
-        prompt: "只回复两个字符：OK",
-      });
-      toast.success("连接正常", { description: `回复：${reply.slice(0, 30)}` });
-    } catch (e) {
-      toast.error("连接失败", { description: String(e) });
-    } finally {
-      setTesting(false);
-    }
-  };
-
-  const currentModelLabel = settings.model
-    ? settings.model.split("/").pop()
-    : "pi 默认";
+  const currentModelLabel = modelOverride
+    ? models?.find(
+        (model) =>
+          model.providerId === modelOverride.providerId &&
+          model.modelId === modelOverride.modelId
+      )?.name ?? modelOverride.modelId
+    : "助手路由";
 
   const menuItems =
     menu === "mention"
@@ -518,7 +503,7 @@ export function Composer({
               {menu === "mention"
                 ? "引用任务（↑↓ 选择，⏎ 确认）"
                 : menu === "skill"
-                  ? "引用 skill（~/.pi/agent/skills）"
+                  ? "引用 skill（~/.mailuo/ai/skills）"
                   : "快捷指令"}
             </p>
             {menu === "mention"
@@ -650,34 +635,41 @@ export function Composer({
               <DropdownMenuLabel className="text-xs">模型</DropdownMenuLabel>
               <DropdownMenuGroup>
                 <DropdownMenuItem
-                  onClick={() => setSettings({ provider: "", model: "" })}
+                  onClick={() => onModelOverrideChange(null)}
                 >
-                  {!settings.model && <Check className="size-3.5" />}
-                  <span className={cn(!settings.model && "font-medium")}>
-                    pi 默认模型
+                  {!modelOverride && <Check className="size-3.5" />}
+                  <span className={cn(!modelOverride && "font-medium")}>
+                    使用助手路由
                   </span>
                 </DropdownMenuItem>
                 {models === null ? (
                   <DropdownMenuItem disabled>
                     <Spinner className="size-3.5" /> 加载中…
                   </DropdownMenuItem>
+                ) : models.length === 0 ? (
+                  <DropdownMenuItem disabled>
+                    尚未启用模型，请前往 AI 设置
+                  </DropdownMenuItem>
                 ) : (
                   models
                     .filter((m) =>
-                      `${m.provider}/${m.id} ${m.name}`
+                      `${m.providerName}/${m.modelId} ${m.name}`
                         .toLowerCase()
                         .includes(modelQuery.toLowerCase())
                     )
                     .slice(0, 60)
                     .map((m) => {
-                    const full = `${m.provider}/${m.id}`;
                     const selected =
-                      settings.model === full || settings.model === m.id;
+                      modelOverride?.providerId === m.providerId &&
+                      modelOverride.modelId === m.modelId;
                     return (
                       <DropdownMenuItem
-                        key={full}
+                        key={`${m.providerId}/${m.modelId}`}
                         onClick={() =>
-                          setSettings({ provider: m.provider, model: full })
+                          onModelOverrideChange({
+                            providerId: m.providerId,
+                            modelId: m.modelId,
+                          })
                         }
                       >
                         {selected && <Check className="size-3.5" />}
@@ -685,7 +677,7 @@ export function Composer({
                           {m.name}
                         </span>
                         <span className="ml-auto text-[10px] text-muted-foreground">
-                          {m.provider}
+                          {m.providerName}
                         </span>
                       </DropdownMenuItem>
                     );
@@ -695,10 +687,6 @@ export function Composer({
               </div>
               <DropdownMenuSeparator />
               <DropdownMenuGroup>
-                <DropdownMenuItem onClick={() => void testConnection()}>
-                  {testing ? <Spinner className="size-3.5" /> : <PlugZap />}
-                  测试连接
-                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
                   <Settings2 />
                   AI 设置…

@@ -2,6 +2,19 @@ import type {
   AssistantAttachmentPayload,
   AssistantEventPayload,
 } from "@/shared/assistant";
+import type {
+  AiConfigSnapshot,
+  AiConfigV1,
+  AiCredentialDraft,
+  AiModelRef,
+  AiProviderConfig,
+  AiRequestContext,
+  AiUseCase,
+  AuthStatus,
+  DiscoveredModel,
+  EnabledModelSummary,
+  RouteResolutionStatus,
+} from "@/shared/ai-config";
 
 export type {
   AssistantAttachmentMeta,
@@ -18,22 +31,48 @@ export interface MailuoApi {
   saveState: (data: string) => Promise<void>;
   getDataDir: () => Promise<string>;
   openDataDir: () => Promise<string>;
-  listModels: () => Promise<
-    { provider: string; id: string; name: string; reasoning: boolean }[]
-  >;
+  listModels: () => Promise<EnabledModelSummary[]>;
   runAgent: (
-    config: unknown,
+    useCase: AiUseCase,
     system: string | null,
-    prompt: string
+    prompt: string,
+    context?: AiRequestContext
   ) => Promise<string>;
   assistantSend: (
     requestId: string,
-    config: unknown,
     system: string,
     message: string,
     projectId: string,
-    attachments: AssistantAttachmentPayload[]
+    attachments: AssistantAttachmentPayload[],
+    context?: AiRequestContext,
+    modelOverride?: AiModelRef | null
   ) => Promise<void>;
+  getAiConfig: () => Promise<AiConfigSnapshot>;
+  reloadAiConfig: () => Promise<AiConfigSnapshot>;
+  saveAiConfig: (
+    config: AiConfigV1,
+    etag: string | null
+  ) => Promise<AiConfigSnapshot>;
+  saveAiCredential: (
+    provider: AiProviderConfig,
+    draft: AiCredentialDraft
+  ) => Promise<AuthStatus>;
+  deleteAiCredential: (providerId: string) => Promise<void>;
+  testAiProvider: (
+    provider: AiProviderConfig,
+    draft: AiCredentialDraft
+  ) => Promise<{ ok: true; message: string }>;
+  discoverAiModels: (
+    provider: AiProviderConfig,
+    draft: AiCredentialDraft
+  ) => Promise<DiscoveredModel[]>;
+  setAiModelEnabled: (
+    ref: AiModelRef,
+    enabled: boolean,
+    etag: string | null
+  ) => Promise<AiConfigSnapshot>;
+  getAiRouteStatuses: () => Promise<RouteResolutionStatus[]>;
+  openAiConfigDir: () => Promise<string>;
   listSkills: () => Promise<
     { name: string; description: string; content: string }[]
   >;

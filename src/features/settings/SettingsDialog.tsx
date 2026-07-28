@@ -7,15 +7,12 @@ import {
   Info,
   MoonStar,
   Palette,
-  PlugZap,
   RotateCcw,
   SunMedium,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Spinner } from "@/components/ui/spinner";
 import {
   Dialog,
   DialogContent,
@@ -43,11 +40,11 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { runAgent } from "@/lib/ai";
 import { bridge } from "@/lib/bridge";
 import { hasNative } from "@/lib/platform";
 import { useAppStore } from "@/store/useAppStore";
 import { seedData } from "@/store/seed";
+import { AiSettingsPane } from "./AiSettingsPane";
 
 /* ---------- Obsidian 式设置行：左侧名称+描述，右侧控件 ---------- */
 
@@ -168,105 +165,6 @@ function AppearancePane() {
             </SelectGroup>
           </SelectContent>
         </Select>
-      </SettingRow>
-    </div>
-  );
-}
-
-function AiPane() {
-  const settings = useAppStore((s) => s.settings);
-  const setSettings = useAppStore((s) => s.setSettings);
-  const [testing, setTesting] = useState(false);
-
-  const test = async () => {
-    setTesting(true);
-    try {
-      const reply = await runAgent({
-        system: "你是连通性测试助手。",
-        prompt: "只回复两个字符：OK",
-      });
-      toast.success("pi SDK 连接正常", {
-        description: `回复：${reply.slice(0, 40)}`,
-      });
-    } catch (e) {
-      toast.error("连接失败", { description: String(e) });
-    } finally {
-      setTesting(false);
-    }
-  };
-
-  return (
-    <div>
-      <SectionHeading>引擎</SectionHeading>
-      <SettingRow
-        title="pi agent SDK"
-        description={
-          <>
-            AI 能力由内置的 pi SDK 直接提供（进程内运行），复用 ~/.pi/agent
-            的凭据与默认模型。留空模型即用 pi 默认。
-          </>
-        }
-      >
-        <Button variant="outline" size="sm" onClick={test} disabled={testing || !hasNative}>
-          {testing ? (
-            <Spinner data-icon="inline-start" />
-          ) : (
-            <PlugZap data-icon="inline-start" />
-          )}
-          {testing ? "测试中…" : "测试连接"}
-        </Button>
-      </SettingRow>
-
-      <SectionHeading>模型</SectionHeading>
-      <SettingRow title="Provider" description="如 google、anthropic、openai-codex。">
-        <Input
-          value={settings.provider}
-          placeholder="pi 默认"
-          className="h-8 w-40"
-          onChange={(e) => setSettings({ provider: e.target.value })}
-        />
-      </SettingRow>
-      <SettingRow title="模型" description="模型 ID，支持 provider/model 形式。">
-        <Input
-          value={settings.model}
-          placeholder="pi 默认"
-          className="h-8 w-40"
-          onChange={(e) => setSettings({ model: e.target.value })}
-        />
-      </SettingRow>
-      <SettingRow title="思考强度" description="推理深度与耗时的权衡。">
-        <Select
-          value={settings.thinking || "default"}
-          onValueChange={(v) =>
-            setSettings({ thinking: v === "default" ? "" : v })
-          }
-        >
-          <SelectTrigger size="sm" className="w-32">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectGroup>
-              <SelectItem value="default">pi 默认</SelectItem>
-              <SelectItem value="off">off · 关闭</SelectItem>
-              <SelectItem value="low">low · 轻量</SelectItem>
-              <SelectItem value="medium">medium · 均衡</SelectItem>
-              <SelectItem value="high">high · 深思</SelectItem>
-            </SelectGroup>
-          </SelectContent>
-        </Select>
-      </SettingRow>
-
-      <SectionHeading>网络</SectionHeading>
-      <SettingRow
-        title="代理"
-        description="模型 API 需要代理时填写，如 http://localhost:7890。"
-      >
-        <Input
-          value={settings.proxy}
-          placeholder="跟随系统环境"
-          className="h-8 w-48"
-          onChange={(e) => setSettings({ proxy: e.target.value })}
-        />
       </SettingRow>
     </div>
   );
@@ -427,7 +325,7 @@ function AboutPane() {
 
 const PANES = [
   { key: "appearance", label: "外观", icon: Palette, pane: AppearancePane },
-  { key: "ai", label: "AI", icon: Bot, pane: AiPane },
+  { key: "ai", label: "AI", icon: Bot, pane: AiSettingsPane },
   { key: "data", label: "数据", icon: Database, pane: DataPane },
   { key: "about", label: "关于", icon: Info, pane: AboutPane },
 ] as const;
@@ -441,7 +339,7 @@ export function SettingsDialog() {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="flex h-[76vh] gap-0 overflow-hidden p-0 sm:max-w-3xl">
+      <DialogContent className="flex h-[82vh] gap-0 overflow-hidden p-0 sm:max-w-5xl">
         <DialogHeader className="sr-only">
           <DialogTitle>设置</DialogTitle>
           <DialogDescription>外观、AI 与数据管理。</DialogDescription>

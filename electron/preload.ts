@@ -3,6 +3,19 @@ import type {
   AssistantAttachmentPayload,
   AssistantEventPayload,
 } from "../src/shared/assistant";
+import type {
+  AiConfigSnapshot,
+  AiConfigV1,
+  AiCredentialDraft,
+  AiModelRef,
+  AiProviderConfig,
+  AiRequestContext,
+  AiUseCase,
+  AuthStatus,
+  DiscoveredModel,
+  EnabledModelSummary,
+  RouteResolutionStatus,
+} from "../src/shared/ai-config";
 
 const api = {
   platform: process.platform as NodeJS.Platform,
@@ -13,33 +26,73 @@ const api = {
   getDataDir: (): Promise<string> => ipcRenderer.invoke("state:dir"),
   openDataDir: (): Promise<string> => ipcRenderer.invoke("state:open-dir"),
 
-  listModels: (): Promise<
-    { provider: string; id: string; name: string; reasoning: boolean }[]
-  > => ipcRenderer.invoke("agent:models"),
+  listModels: (): Promise<EnabledModelSummary[]> =>
+    ipcRenderer.invoke("agent:models"),
 
   runAgent: (
-    config: unknown,
+    useCase: AiUseCase,
     system: string | null,
-    prompt: string
-  ): Promise<string> => ipcRenderer.invoke("agent:run", config, system, prompt),
+    prompt: string,
+    context?: AiRequestContext
+  ): Promise<string> =>
+    ipcRenderer.invoke("agent:run", useCase, system, prompt, context),
 
   assistantSend: (
     requestId: string,
-    config: unknown,
     system: string,
     message: string,
     projectId: string,
-    attachments: AssistantAttachmentPayload[]
+    attachments: AssistantAttachmentPayload[],
+    context?: AiRequestContext,
+    modelOverride?: AiModelRef | null
   ): Promise<void> =>
     ipcRenderer.invoke(
       "assistant:send",
       requestId,
-      config,
       system,
       message,
       projectId,
-      attachments
+      attachments,
+      context,
+      modelOverride
     ),
+
+  getAiConfig: (): Promise<AiConfigSnapshot> =>
+    ipcRenderer.invoke("ai:config:get"),
+  reloadAiConfig: (): Promise<AiConfigSnapshot> =>
+    ipcRenderer.invoke("ai:config:reload"),
+  saveAiConfig: (
+    config: AiConfigV1,
+    etag: string | null
+  ): Promise<AiConfigSnapshot> =>
+    ipcRenderer.invoke("ai:config:save", config, etag),
+  saveAiCredential: (
+    provider: AiProviderConfig,
+    draft: AiCredentialDraft
+  ): Promise<AuthStatus> =>
+    ipcRenderer.invoke("ai:auth:save", provider, draft),
+  deleteAiCredential: (providerId: string): Promise<void> =>
+    ipcRenderer.invoke("ai:auth:delete", providerId),
+  testAiProvider: (
+    provider: AiProviderConfig,
+    draft: AiCredentialDraft
+  ): Promise<{ ok: true; message: string }> =>
+    ipcRenderer.invoke("ai:provider:test", provider, draft),
+  discoverAiModels: (
+    provider: AiProviderConfig,
+    draft: AiCredentialDraft
+  ): Promise<DiscoveredModel[]> =>
+    ipcRenderer.invoke("ai:models:discover", provider, draft),
+  setAiModelEnabled: (
+    ref: AiModelRef,
+    enabled: boolean,
+    etag: string | null
+  ): Promise<AiConfigSnapshot> =>
+    ipcRenderer.invoke("ai:model:set-enabled", ref, enabled, etag),
+  getAiRouteStatuses: (): Promise<RouteResolutionStatus[]> =>
+    ipcRenderer.invoke("ai:routes:status"),
+  openAiConfigDir: (): Promise<string> =>
+    ipcRenderer.invoke("ai:config:open-dir"),
 
   listSkills: (): Promise<
     { name: string; description: string; content: string }[]

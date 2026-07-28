@@ -5,7 +5,26 @@
  */
 import { EnvHttpProxyAgent, fetch as undiciFetch } from "undici";
 
-const agent = new EnvHttpProxyAgent();
+let agent: EnvHttpProxyAgent | null = null;
+let proxyKey = "";
+
+function currentAgent(): EnvHttpProxyAgent {
+  const nextKey = [
+    process.env.HTTP_PROXY ?? process.env.http_proxy ?? "",
+    process.env.HTTPS_PROXY ?? process.env.https_proxy ?? "",
+    process.env.NO_PROXY ?? process.env.no_proxy ?? "",
+  ].join("|");
+  if (!agent || nextKey !== proxyKey) {
+    const previous = agent;
+    proxyKey = nextKey;
+    agent = new EnvHttpProxyAgent();
+    void previous?.close();
+  }
+  return agent;
+}
 
 globalThis.fetch = ((input: Parameters<typeof undiciFetch>[0], init?: Parameters<typeof undiciFetch>[1]) =>
-  undiciFetch(input, { ...init, dispatcher: agent })) as unknown as typeof fetch;
+  undiciFetch(input, {
+    ...init,
+    dispatcher: currentAgent(),
+  })) as unknown as typeof fetch;

@@ -16,10 +16,6 @@ export type GraphDirection = "LR" | "TB";
 export type StatusFilter = "all" | "todo" | "doing" | "done" | "blocked";
 
 export interface AppSettings {
-  provider: string;
-  model: string;
-  thinking: string;
-  proxy: string;
   /** 界面缩放（1 = 100%） */
   uiScale: number;
   /** 正文字体 */
@@ -140,10 +136,6 @@ function loadPanels(): { left: boolean; right: boolean } {
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
-  provider: "",
-  model: "",
-  thinking: "",
-  proxy: "",
   uiScale: 1,
   fontBody: "sans",
   fontHeading: "serif",
@@ -152,7 +144,14 @@ const DEFAULT_SETTINGS: AppSettings = {
 function loadSettings(): AppSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    return raw ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } : DEFAULT_SETTINGS;
+    if (!raw) return DEFAULT_SETTINGS;
+    const stored = JSON.parse(raw) as Partial<AppSettings>;
+    return {
+      uiScale:
+        typeof stored.uiScale === "number" ? stored.uiScale : DEFAULT_SETTINGS.uiScale,
+      fontBody: stored.fontBody === "serif" ? "serif" : "sans",
+      fontHeading: stored.fontHeading === "sans" ? "sans" : "serif",
+    };
   } catch {
     return DEFAULT_SETTINGS;
   }

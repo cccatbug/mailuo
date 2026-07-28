@@ -1,27 +1,28 @@
-import { useAppStore } from "@/store/useAppStore";
+import type {
+  AiModelRef,
+  AiRequestContext,
+  AiUseCase,
+} from "@/shared/ai-config";
 import {
   bridge,
   type AssistantAttachmentPayload,
   type AssistantEventPayload,
 } from "./bridge";
 
-function agentConfig() {
-  const { settings } = useAppStore.getState();
-  return {
-    provider: settings.provider || null,
-    model: settings.model || null,
-    thinking: settings.thinking || null,
-    proxy: settings.proxy || null,
-  };
-}
-
 /** 一次性 agent 调用（pi SDK，主进程内），返回纯文本回复 */
 export async function runAgent(opts: {
+  useCase: Exclude<AiUseCase, "assistant">;
   system?: string;
   prompt: string;
+  context?: AiRequestContext;
 }): Promise<string> {
   if (!bridge) throw new Error("AI 能力仅在桌面应用中可用");
-  return bridge.runAgent(agentConfig(), opts.system ?? null, opts.prompt);
+  return bridge.runAgent(
+    opts.useCase,
+    opts.system ?? null,
+    opts.prompt,
+    opts.context
+  );
 }
 
 /** 通过常驻 pi SDK 会话发送消息，全事件流式回调（文本/思考/工具），回合结束 resolve。 */
@@ -30,6 +31,8 @@ export async function assistantSend(
   message: string,
   projectId: string,
   attachments: AssistantAttachmentPayload[],
+  context: AiRequestContext,
+  modelOverride: AiModelRef | null | undefined,
   onEvent: (event: AssistantEventPayload) => void
 ): Promise<void> {
   const b = bridge;
@@ -53,11 +56,12 @@ export async function assistantSend(
     );
     b.assistantSend(
       requestId,
-      agentConfig(),
       system,
       message,
       projectId,
-      attachments
+      attachments,
+      context,
+      modelOverride
     ).catch((e) => {
       unsubscribe();
       reject(e instanceof Error ? e : new Error(String(e)));
@@ -102,8 +106,10 @@ export function extractJson<T>(text: string): T {
 }
 
 export async function runAgentJson<T>(opts: {
+  useCase: Exclude<AiUseCase, "assistant">;
   system?: string;
   prompt: string;
+  context?: AiRequestContext;
 }): Promise<T> {
   const text = await runAgent(opts);
   return extractJson<T>(text);

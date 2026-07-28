@@ -13,6 +13,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "tsc && electron-vite build",
+    "test": "vitest run",
     "preview": "electron-vite preview",
     "dist": "tsc && electron-vite build && electron-builder",
     "web": "vite"
@@ -59,6 +60,7 @@
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4"
+    "vite": "^7.0.4",
+    "vitest": "^3.2.4"
   }
 }

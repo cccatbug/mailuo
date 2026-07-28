@@ -20,7 +20,7 @@
 - **统计视图（⌘3）**：概览数字（全部/已完成/受阻/逾期）、状态构成堆叠条、近 14 天完成趋势、
   优先级与标签分布、依赖结构指标 —— 图表色板经 CVD/对比度脚本双主题验证
 - **AI（pi SDK 进程内直连）**：主进程内嵌 `@earendil-works/pi-coding-agent` SDK——
-  `ModelRuntime` 复用 pi 的凭据体系（auth.json / 环境变量），`AgentSession` 提供**流式输出与
+  `ModelRuntime` 只注册脉络显式启用的 Provider 与模型，`AgentSession` 提供**流式输出与
   多轮记忆**；AI 规划项目（目标 → 任务 DAG 草案）、AI 拆解任务为前置子任务、AI 依赖建议
   （勾选后批量建立）、AI 撰写/润色备注，以及「脉络助手」对话侧栏（⌘J）——助手可提出
   create_task / add_dep / set_status 等操作（确认后一键应用），也能主动输出 bar / line / area /
@@ -28,7 +28,7 @@
   选择附件、粘贴图片、拖入文件，并以环形进度显示当前会话的真实上下文占用
 - **右键菜单**：任务（状态、复制、优先级、快捷期限、AI 子菜单、删除）、项目（编辑、AI、删除）、
   脉络图节点与画布均有专属菜单
-- **设置（⌘,）**：外观（主题/缩放/字体）、AI（Provider/模型/思考强度/代理、测试连接）、
+- **设置（⌘,）**：外观（主题/缩放/字体）、AI（Provider/模型库/用途路由/上下文配置档/网络）、
   数据（位置、导出、重置）、关于
 - **顶部标题栏**：品牌、窗口拖动区、搜索（⌘K）、AI 助手、设置、主题切换；
   macOS 原生红绿灯 / Windows 自绘窗口控制按钮
@@ -54,10 +54,13 @@ src/
 ```bash
 pnpm install
 pnpm dev     # Electron 桌面应用（renderer 热更新）
+pnpm test    # Vitest 配置、发现与运行时测试
 pnpm dist    # 打包（dmg / nsis / AppImage，图标在 build/）
 pnpm web     # 纯浏览器预览（localStorage 持久化，无 AI）
 ```
 
-> AI 由主进程内嵌的 pi SDK 直接提供，复用 `~/.pi/agent` 的凭据（auth.json / 环境变量）与
-> 默认模型；主进程启动时会导入登录 shell 环境，全局 fetch 尊重 HTTP(S)_PROXY，
-> 也可在设置 → AI 单独指定代理。旧 Tauri 版本的数据会在首次启动时自动迁移。
+> AI 配置完全独立于 pi CLI：`~/.mailuo/ai/config.json` 保存 Provider、模型库、用途路由与
+> 上下文策略，`~/.mailuo/ai/auth.json` 以 `0600` 权限保存凭据，模型发现缓存和应用 skills
+> 分别位于 `catalog-cache/` 与 `skills/`。应用不会读取或回退到 `~/.pi`、项目 `.pi`、
+> `~/.agents`、Provider 环境变量或登录 shell 凭据。代理只使用 AI 设置中的应用级网络配置。
+> 旧 Tauri 版本的任务数据会在首次启动时自动迁移。

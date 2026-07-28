@@ -1,9 +1,10 @@
 import { app, BrowserWindow, ipcMain, shell } from "electron";
-import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  AI_CONFIG,
+  AI_RUNTIME,
   appendMemory,
   assistantReset,
   assistantSend,
@@ -15,37 +16,27 @@ import {
   runOneShot,
   workspaceDir,
   writeMailuoFile,
-  type AgentConfig,
 } from "./pi";
 import type { AssistantAttachmentPayload } from "../src/shared/assistant";
+import {
+  aiProviderConfigSchema,
+  aiCredentialDraftSchema,
+  aiModelRefSchema,
+  aiRequestContextSchema,
+  aiUseCaseSchema,
+  type AiConfigV1,
+  type AiCredentialDraft,
+  type AiModelRef,
+  type AiRequestContext,
+  type AiUseCase,
+} from "../src/shared/ai-config";
+import {
+  cacheDiscoveredModels,
+  discoverModels,
+  testProviderConnection,
+} from "./model-discovery";
 
 const isMac = process.platform === "darwin";
-
-/* ---------- 登录 shell 环境（API 密钥、代理常在 .zshrc 里，GUI 进程拿不到） ---------- */
-
-async function importLoginShellEnv(): Promise<void> {
-  if (process.platform === "win32") return;
-  const shellBin = process.env.SHELL || "/bin/zsh";
-  try {
-    const out = await new Promise<string>((resolve, reject) => {
-      execFile(
-        shellBin,
-        ["-lic", "env -0"],
-        { timeout: 10000, maxBuffer: 4 * 1024 * 1024 },
-        (err, stdout) => (err ? reject(err) : resolve(stdout))
-      );
-    });
-    for (const kv of out.split("\0")) {
-      const idx = kv.indexOf("=");
-      if (idx <= 0) continue;
-      const key = kv.slice(0, idx);
-      // 只补缺，不覆盖已有值
-      if (!(key in process.env)) process.env[key] = kv.slice(idx + 1);
-    }
-  } catch (e) {
-    console.warn("导入登录 shell 环境失败：", e);
-  }
-}
 
 /* ---------- 数据持久化（原子写入 + 旧 Tauri 数据迁移） ---------- */
 
@@ -131,6 +122,102 @@ function registerIpc() {
 
   ipcMain.handle("agent:models", () => listModels());
   ipcMain.handle("agent:skills", () => listSkills());
+  ipcMain.handle("ai:config:get", () => AI_RUNTIME.snapshot());
+  ipcMain.handle("ai:config:reload", async () => {
+    const snapshot = await AI_RUNTIME.reload();
+    assistantReset();
+    return snapshot;
+  });
+  ipcMain.handle(
+    "ai:config:save",
+    async (_e, config: AiConfigV1, etag: string | null) => {
+      const snapshot = await AI_RUNTIME.saveConfig(config, etag);
+      assistantReset();
+      return snapshot;
+    }
+  );
+  ipcMain.handle(
+    "ai:auth:save",
+    async (
+      _e,
+      providerInput: unknown,
+      draft: AiCredentialDraft
+    ) => {
+      const provider = aiProviderConfigSchema.parse(providerInput);
+      const credentialDraft = aiCredentialDraftSchema.parse(draft ?? {});
+      const status = await AI_CONFIG.saveCredential(provider, credentialDraft);
+      assistantReset();
+      return status;
+    }
+  );
+  ipcMain.handle("ai:auth:delete", async (_e, providerId: string) => {
+    await AI_CONFIG.deleteCredential(providerId);
+    assistantReset();
+  });
+  ipcMain.handle(
+    "ai:provider:test",
+    async (
+      _e,
+      providerInput: unknown,
+      draft: AiCredentialDraft
+    ) => {
+      const provider = aiProviderConfigSchema.parse(providerInput);
+      const credentialDraft = aiCredentialDraftSchema.parse(draft ?? {});
+      const credential = await AI_CONFIG.resolveCredential(
+        provider,
+        credentialDraft
+      );
+      return testProviderConnection(provider, credential);
+    }
+  );
+  ipcMain.handle(
+    "ai:models:discover",
+    async (
+      _e,
+      providerInput: unknown,
+      draft: AiCredentialDraft
+    ) => {
+      const provider = aiProviderConfigSchema.parse(providerInput);
+      const credentialDraft = aiCredentialDraftSchema.parse(draft ?? {});
+      const credential = await AI_CONFIG.resolveCredential(
+        provider,
+        credentialDraft
+      );
+      const models = await discoverModels(provider, credential);
+      await cacheDiscoveredModels(
+        AI_CONFIG.catalogCacheDir,
+        provider.id,
+        models
+      );
+      return models;
+    }
+  );
+  ipcMain.handle(
+    "ai:model:set-enabled",
+    async (_e, ref: AiModelRef, enabled: boolean, etag: string | null) => {
+      const modelRef = aiModelRefSchema.parse(ref);
+      const snapshot = await AI_RUNTIME.snapshot();
+      if (snapshot.etag !== etag) {
+        throw new Error("AI 配置已变化，请重新加载后再操作");
+      }
+      const config = structuredClone(snapshot.config);
+      const model = config.models.find(
+        (entry) =>
+          entry.providerId === modelRef.providerId &&
+          entry.modelId === modelRef.modelId
+      );
+      if (!model) throw new Error("模型不存在");
+      model.enabled = enabled;
+      const saved = await AI_RUNTIME.saveConfig(config, etag);
+      assistantReset();
+      return saved;
+    }
+  );
+  ipcMain.handle("ai:routes:status", () => AI_RUNTIME.routeStatuses());
+  ipcMain.handle("ai:config:open-dir", async () => {
+    await AI_CONFIG.ensureDirectories();
+    return shell.openPath(AI_CONFIG.root);
+  });
   ipcMain.handle("mailuo:read-file", (_e, p: string) => readMailuoFile(p));
   ipcMain.handle(
     "mailuo:read-image-data-url",
@@ -146,8 +233,19 @@ function registerIpc() {
   );
   ipcMain.handle(
     "agent:run",
-    (_e, config: AgentConfig, system: string | null, prompt: string) =>
-      runOneShot(config, system, prompt)
+    (
+      _e,
+      useCase: AiUseCase,
+      system: string | null,
+      prompt: string,
+      context: AiRequestContext | undefined
+    ) =>
+      runOneShot(
+        aiUseCaseSchema.parse(useCase),
+        system,
+        prompt,
+        context ? aiRequestContextSchema.parse(context) : undefined
+      )
   );
 
   ipcMain.handle(
@@ -155,18 +253,20 @@ function registerIpc() {
     (
       e,
       requestId: string,
-      config: AgentConfig,
       system: string,
       message: string,
       projectId: string,
-      attachments: AssistantAttachmentPayload[]
+      attachments: AssistantAttachmentPayload[],
+      context: AiRequestContext | undefined,
+      modelOverride: AiModelRef | null | undefined
     ) =>
       assistantSend(
-        config,
         system,
         message,
         projectId ?? "default",
         attachments ?? [],
+        context ? aiRequestContextSchema.parse(context) : undefined,
+        modelOverride ? aiModelRefSchema.parse(modelOverride) : undefined,
         (event) => {
           if (!e.sender.isDestroyed()) {
             e.sender.send("assistant:event", requestId, event);
@@ -198,7 +298,6 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   void app.whenReady().then(async () => {
-    await importLoginShellEnv();
     registerIpc();
     createWindow();
     app.on("activate", () => {

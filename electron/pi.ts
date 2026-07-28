@@ -5,9 +5,8 @@ import path from "node:path";
 import {
   createAgentSession,
   DefaultResourceLoader,
-  getAgentDir,
-  ModelRuntime,
   SessionManager,
+  SettingsManager,
   type AgentSession,
   type AgentSessionEvent,
 } from "@earendil-works/pi-coding-agent";
@@ -17,19 +16,26 @@ import type {
   AssistantAttachmentPayload,
   AssistantEventPayload,
 } from "../src/shared/assistant";
-
-export interface AgentConfig {
-  provider?: string | null;
-  model?: string | null;
-  thinking?: string | null;
-  proxy?: string | null;
-}
+import type {
+  AiContextProfile,
+  AiModelRef,
+  AiRequestContext,
+  AiUseCase,
+} from "../src/shared/ai-config";
+import { AiConfigStore } from "./ai-config-store";
+import {
+  AiRuntimeManager,
+  type ResolvedAiRoute,
+} from "./ai-runtime";
+import { assembleAiContext } from "./context-assembly";
 
 export type AssistantEvent = AssistantEventPayload;
 
 /* ---------- 应用数据根：~/.mailuo ---------- */
 
 export const MAILUO_HOME = path.join(os.homedir(), ".mailuo");
+export const AI_CONFIG = new AiConfigStore();
+export const AI_RUNTIME = new AiRuntimeManager(AI_CONFIG);
 
 export function workspaceDir(projectId: string): string {
   // 项目 id 是 uuid，安全拼接
@@ -96,7 +102,7 @@ async function readMemory(): Promise<string> {
   }
 }
 
-/* ---------- skills（~/.pi/agent/skills，SKILL.md 带 frontmatter） ---------- */
+/* ---------- skills（~/.mailuo/ai/skills，SKILL.md 带 frontmatter） ---------- */
 
 export interface SkillInfo {
   name: string;
@@ -105,7 +111,7 @@ export interface SkillInfo {
 }
 
 export async function listSkills(): Promise<SkillInfo[]> {
-  const dir = path.join(getAgentDir(), "skills");
+  const dir = AI_CONFIG.skillsDir;
   const out: SkillInfo[] = [];
   let entries: string[] = [];
   try {
@@ -132,92 +138,104 @@ export async function listSkills(): Promise<SkillInfo[]> {
   return out;
 }
 
-/* ---------- ModelRuntime ---------- */
-
-let mrPromise: Promise<ModelRuntime> | undefined;
-
-function modelRuntime(): Promise<ModelRuntime> {
-  mrPromise ??= ModelRuntime.create().catch((err: unknown) => {
-    mrPromise = undefined;
-    throw err;
-  });
-  return mrPromise;
-}
-
 export async function listModels(): Promise<
-  { provider: string; id: string; name: string; reasoning: boolean }[]
+  {
+    providerId: string;
+    providerName: string;
+    modelId: string;
+    name: string;
+    reasoning: boolean;
+    input: ("text" | "image")[];
+  }[]
 > {
-  const mr = await modelRuntime();
-  const models = await mr.getAvailable();
-  return models.map((m) => ({
-    provider: m.provider,
-    id: m.id,
-    name: m.name ?? m.id,
-    reasoning: Boolean(m.reasoning),
-  }));
-}
-
-function applyProxy(config: AgentConfig) {
-  const proxy = config.proxy?.trim();
-  if (!proxy) return;
-  process.env.http_proxy = proxy;
-  process.env.https_proxy = proxy;
-  process.env.HTTP_PROXY = proxy;
-  process.env.HTTPS_PROXY = proxy;
+  return AI_RUNTIME.listEnabledModels();
 }
 
 /* ---------- 会话构造 ---------- */
 
 async function makeSession(
-  config: AgentConfig,
+  resolved: ResolvedAiRoute,
   system: string,
   opts: { cwd?: string; withTools?: boolean } = {}
 ): Promise<AgentSession> {
-  applyProxy(config);
-  const mr = await modelRuntime();
-
-  let model;
-  const wanted = config.model?.trim();
-  if (wanted) {
-    const [p, ...rest] = wanted.includes("/")
-      ? wanted.split("/")
-      : [config.provider?.trim() ?? "", wanted];
-    model = mr.getModel(p, rest.join("/"));
-    if (!model) throw new Error(`未找到模型：${wanted}（检查设置中的 Provider/模型）`);
-  }
-
   const cwd = opts.cwd ?? process.cwd();
   if (opts.cwd) await fs.mkdir(cwd, { recursive: true });
 
-  const memory = opts.withTools ? await readMemory() : "";
   const fullSystem = opts.withTools
     ? `${system}\n\n# 工作目录\n你拥有 read/bash/edit/write 工具。当前工作目录：${cwd}。用户让你产出文档/文件时，写入工作目录（相对路径即可），完成后告知文件名。\n${
-        memory ? `\n# 用户长期记忆\n${memory.slice(0, 4000)}\n` : ""
+        resolved.contextProfile.sources.attachments.enabled
+          ? "用户附件会保存在该工作目录的 .attachments 目录。"
+          : ""
       }`
     : system;
 
+  const profile = resolved.contextProfile;
+  const settingsManager = SettingsManager.inMemory({
+    defaultProvider: resolved.runtimeProviderId,
+    defaultModel: resolved.model.id,
+    defaultThinkingLevel: resolved.thinkingLevel,
+    compaction: profile.compaction,
+    retry: {
+      enabled: profile.retry.enabled,
+      maxRetries: Math.max(0, profile.retry.maxAttempts - 1),
+      baseDelayMs: profile.retry.baseDelayMs,
+      provider: {
+        maxRetries: Math.max(0, profile.retry.maxAttempts - 1),
+        maxRetryDelayMs: profile.retry.maxDelayMs,
+      },
+    },
+    images: { blockImages: !profile.sources.attachments.enabled },
+  });
   const resourceLoader = new DefaultResourceLoader({
     cwd,
-    agentDir: getAgentDir(),
+    agentDir: AI_CONFIG.root,
+    settingsManager,
     noExtensions: true,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    noContextFiles: true,
     systemPromptOverride: () => fullSystem,
   });
   await resourceLoader.reload();
 
   const { session } = await createAgentSession({
     cwd,
-    agentDir: getAgentDir(),
-    modelRuntime: mr,
-    model,
+    agentDir: AI_CONFIG.root,
+    modelRuntime: await AI_RUNTIME.modelRuntime(),
+    model: resolved.model,
+    thinkingLevel: resolved.thinkingLevel,
     sessionManager: SessionManager.inMemory(cwd),
+    settingsManager,
     resourceLoader,
     // 纯任务型调用不开工具；小枢会话开放安全内建工具
     tools: opts.withTools ? ["read", "bash", "edit", "write", "grep", "find", "ls"] : [],
-    ...(config.thinking?.trim()
-      ? { thinkingLevel: config.thinking.trim() as never }
-      : {}),
   });
   return session;
+}
+
+async function buildPrompt(
+  resolved: ResolvedAiRoute,
+  baseSystemPrompt: string,
+  userMessage: string,
+  requestContext?: AiRequestContext
+): Promise<{ systemPrompt: string; message: string }> {
+  const skillNames = requestContext?.skillNames ?? [];
+  const skills =
+    resolved.contextProfile.sources.skills.enabled && skillNames.length
+      ? (await listSkills()).filter((skill) => skillNames.includes(skill.name))
+      : [];
+  const memory = resolved.contextProfile.sources.longTermMemory.enabled
+    ? await readMemory()
+    : "";
+  return assembleAiContext({
+    profile: resolved.contextProfile,
+    baseSystemPrompt,
+    userMessage,
+    requestContext,
+    longTermMemory: memory,
+    skills,
+  });
 }
 
 function extractResultText(result: unknown): string {
@@ -248,9 +266,7 @@ const clip = (s: string, n: number) =>
 
 /* ---------- 用户附件 ---------- */
 
-const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
-const MAX_ATTACHMENT_TOTAL_BYTES = 25 * 1024 * 1024;
-const MAX_ATTACHMENT_TEXT_CHARS = 100_000;
+const HARD_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
 function detectImageMimeType(bytes: Uint8Array): string | null {
   const startsWith = (signature: number[], offset = 0) =>
@@ -281,13 +297,21 @@ function safeAttachmentName(name: string): string {
 async function prepareAttachments(
   cwd: string,
   message: string,
-  attachments: AssistantAttachmentPayload[]
+  attachments: AssistantAttachmentPayload[],
+  profile: AiContextProfile
 ): Promise<{
   message: string;
   images: ImageContent[];
   attachments: AssistantAttachmentMeta[];
 }> {
-  const picked = attachments.slice(0, 8);
+  const budget = profile.sources.attachments;
+  if (!budget.enabled && attachments.length > 0) {
+    throw new Error(`上下文配置档「${profile.name}」未启用附件`);
+  }
+  const picked = attachments.slice(0, budget.maxCount);
+  if (picked.length < attachments.length) {
+    throw new Error(`附件数量不能超过 ${budget.maxCount} 个`);
+  }
   if (picked.length === 0) {
     return { message, images: [], attachments: [] };
   }
@@ -307,12 +331,17 @@ async function prepareAttachments(
       throw new Error(`附件「${item.name}」内容为空`);
     }
     const bytes = Buffer.from(item.data, "base64");
-    if (bytes.length === 0 || bytes.length > MAX_ATTACHMENT_BYTES) {
-      throw new Error(`附件「${item.name}」超过 10 MB 或内容无效`);
+    const maxSingleBytes = Math.min(HARD_ATTACHMENT_BYTES, budget.maxBytes);
+    if (bytes.length === 0 || bytes.length > maxSingleBytes) {
+      throw new Error(
+        `附件「${item.name}」超过 ${Math.floor(maxSingleBytes / 1024 / 1024)} MB 或内容无效`
+      );
     }
     totalBytes += bytes.length;
-    if (totalBytes > MAX_ATTACHMENT_TOTAL_BYTES) {
-      throw new Error("附件总大小不能超过 25 MB");
+    if (totalBytes > budget.maxBytes) {
+      throw new Error(
+        `附件总大小不能超过 ${Math.floor(budget.maxBytes / 1024 / 1024)} MB`
+      );
     }
 
     const name = safeAttachmentName(item.name);
@@ -347,8 +376,11 @@ async function prepareAttachments(
         data: bytes.toString("base64"),
         mimeType: detectedImageMime,
       });
-    } else if (item.kind === "text" && totalTextChars < MAX_ATTACHMENT_TEXT_CHARS) {
-      const remaining = MAX_ATTACHMENT_TEXT_CHARS - totalTextChars;
+    } else if (
+      item.kind === "text" &&
+      totalTextChars < budget.maxTextChars
+    ) {
+      const remaining = budget.maxTextChars - totalTextChars;
       const text = bytes.toString("utf8").slice(0, remaining);
       totalTextChars += text.length;
       textBlocks.push(
@@ -376,11 +408,19 @@ async function prepareAttachments(
 /* ---------- 一次性调用 ---------- */
 
 export async function runOneShot(
-  config: AgentConfig,
+  useCase: AiUseCase,
   system: string | null,
-  prompt: string
+  prompt: string,
+  requestContext?: AiRequestContext
 ): Promise<string> {
-  const session = await makeSession(config, system ?? "You are a helpful assistant.");
+  const resolved = await AI_RUNTIME.resolve(useCase);
+  const assembled = await buildPrompt(
+    resolved,
+    system ?? "You are a helpful assistant.",
+    prompt,
+    requestContext
+  );
+  const session = await makeSession(resolved, assembled.systemPrompt);
   let acc = "";
   const unsub = session.subscribe((event: AgentSessionEvent) => {
     if (
@@ -391,7 +431,7 @@ export async function runOneShot(
     }
   });
   try {
-    await session.prompt(prompt);
+    await session.prompt(assembled.message);
     const result = acc.trim();
     if (!result) throw new Error("模型返回了空回复");
     return result;
@@ -405,38 +445,60 @@ export async function runOneShot(
 
 let assistant: { session: AgentSession; key: string } | null = null;
 
-function configKey(config: AgentConfig, system: string, cwd: string): string {
+function configKey(
+  resolved: ResolvedAiRoute,
+  system: string,
+  cwd: string
+): string {
   return [
-    config.provider ?? "",
-    config.model ?? "",
-    config.thinking ?? "",
+    resolved.configEtag ?? "missing",
+    resolved.runtimeProviderId,
+    resolved.model.id,
+    resolved.thinkingLevel,
+    resolved.contextProfile.id,
     cwd,
     system,
   ].join("|");
 }
 
 export async function assistantSend(
-  config: AgentConfig,
   system: string,
   message: string,
   projectId: string,
   attachments: AssistantAttachmentPayload[],
+  requestContext: AiRequestContext | undefined,
+  modelOverride: AiModelRef | null | undefined,
   emit: (event: AssistantEvent) => void
 ): Promise<void> {
   const cwd = workspaceDir(projectId || "default");
-  const key = configKey(config, system, cwd);
+  const resolved = await AI_RUNTIME.resolve("assistant", modelOverride);
+  const assembled = await buildPrompt(
+    resolved,
+    system,
+    message,
+    requestContext
+  );
+  const key = configKey(resolved, assembled.systemPrompt, cwd);
   if (assistant && assistant.key !== key) {
     assistant.session.dispose();
     assistant = null;
   }
   if (!assistant) {
     assistant = {
-      session: await makeSession(config, system, { cwd, withTools: true }),
+      session: await makeSession(resolved, assembled.systemPrompt, {
+        cwd,
+        withTools: true,
+      }),
       key,
     };
   }
   const { session } = assistant;
-  const prepared = await prepareAttachments(cwd, message, attachments);
+  const prepared = await prepareAttachments(
+    cwd,
+    assembled.message,
+    attachments,
+    resolved.contextProfile
+  );
   if (prepared.attachments.length > 0) {
     emit({ type: "attachments", attachments: prepared.attachments });
   }

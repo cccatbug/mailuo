@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import {
+  AlertCircle,
   Brain,
   Check,
   ChevronRight,
@@ -8,6 +9,7 @@ import {
   FileImage,
   FileText,
   Terminal,
+  Settings2,
   Wrench,
   X,
 } from "lucide-react";
@@ -39,8 +41,9 @@ import {
   attachmentPayload,
   type ComposerAttachment,
 } from "./attachments";
-import { getSkills } from "./skills";
 import { Md } from "./Markdown";
+import type { AiModelRef } from "@/shared/ai-config";
+import type { RouteResolutionStatus } from "@/shared/ai-config";
 
 /* ---------- 消息模型：分段时间线（文本 / 思考 / 工具） ---------- */
 
@@ -76,6 +79,7 @@ export interface Conversation {
   title: string;
   updatedAt: number;
   messages: Message[];
+  modelOverride?: AiModelRef;
 }
 
 /* ---------- 会话历史（localStorage 持久化） ---------- */
@@ -250,6 +254,7 @@ async function sendMessage(
   if (useChat.getState().busy) return false;
 
   const conv = ensureConversation(projectId);
+  const modelOverride = conv.modelOverride;
   const wasStale = useChat.getState().stale;
   const agentText =
     text.trim() || "请查看本轮附件，并结合当前项目给出分析或完成请求。";
@@ -301,6 +306,7 @@ async function sendMessage(
     projectId,
     skillNames,
     staleContext,
+    modelOverride,
   });
   return true;
 }
@@ -312,6 +318,7 @@ async function completeAssistantTurn({
   projectId,
   skillNames,
   staleContext,
+  modelOverride,
 }: {
   agentText: string;
   attachmentPayloads: ReturnType<typeof attachmentPayload>[];
@@ -319,6 +326,7 @@ async function completeAssistantTurn({
   projectId: string;
   skillNames: string[];
   staleContext: string;
+  modelOverride?: AiModelRef;
 }): Promise<void> {
   let fullText = "";
   let segText = "";
@@ -413,19 +421,18 @@ async function completeAssistantTurn({
   };
 
   try {
-    const skills = (await getSkills()).filter((skill) =>
-      skillNames.includes(skill.name)
-    );
-    const skillContext = skills.length
-      ? `\n\n【用户 $ 引用的 skill，请遵循其中的方法执行】\n${skills
-          .map((skill) => `--- skill: ${skill.name} ---\n${skill.content}`)
-          .join("\n\n")}`
-      : "";
     await assistantSend(
       ASSISTANT_SYSTEM,
-      `【当前项目快照】\n${projectContext(projectId)}${mentionContext}${skillContext}${staleContext}\n\n${agentText}`,
+      agentText,
       projectId,
       attachmentPayloads,
+      {
+        projectSnapshot: projectContext(projectId),
+        taskDetails: mentionContext,
+        conversationHistory: staleContext,
+        skillNames,
+      },
+      modelOverride,
       onEvent
     );
     // 回合结束：解析协议块（在完整文本上），清理各文本段
@@ -630,6 +637,9 @@ export function AssistantPanel() {
   const currentId = useChat((s) => s.currentId);
   const busy = useChat((s) => s.busy);
   const contextUsage = useChat((s) => s.contextUsage);
+  const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
+  const [assistantStatus, setAssistantStatus] =
+    useState<RouteResolutionStatus | null>(null);
   const conv = conversations.find((c) => c.id === currentId) ?? null;
   const messages =
     conv && conv.projectId === selectedProjectId ? conv.messages : [];
@@ -650,6 +660,34 @@ export function AssistantPanel() {
   useEffect(() => {
     requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: 999999 }));
   }, [messages]);
+
+  useEffect(() => {
+    const refreshStatus = () => {
+      void bridge
+        ?.getAiRouteStatuses()
+        .then((statuses) =>
+          setAssistantStatus(
+            statuses.find((status) => status.useCase === "assistant") ?? null
+          )
+        )
+        .catch((error) =>
+          setAssistantStatus({
+            useCase: "assistant",
+            ready: false,
+            message: String(error),
+          })
+        );
+    };
+    refreshStatus();
+    const onRuntimeChanged = () => {
+      useChat.getState().set({ stale: true, contextUsage: undefined });
+      void assistantReset();
+      refreshStatus();
+    };
+    window.addEventListener("mailuo-ai-runtime-changed", onRuntimeChanged);
+    return () =>
+      window.removeEventListener("mailuo-ai-runtime-changed", onRuntimeChanged);
+  }, []);
 
   const applyOps = (idx: number) => {
     const msg = messages[idx];
@@ -809,10 +847,41 @@ export function AssistantPanel() {
         )}
       </div>
 
+      {assistantStatus?.ready === false && (
+        <div className="mx-3 mb-2 flex items-center gap-2 rounded-lg border border-dashed p-2.5 text-xs">
+          <AlertCircle className="size-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1">
+            尚未完成 AI 配置。{assistantStatus.message}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setSettingsOpen(true)}
+          >
+            <Settings2 />
+            前往设置
+          </Button>
+        </div>
+      )}
+
       <Composer
         tasks={projectTasks}
-        busy={busy}
+        busy={busy || assistantStatus?.ready === false}
         contextUsage={contextUsage}
+        modelOverride={conv?.modelOverride}
+        onModelOverrideChange={(modelOverride) => {
+          if (!selectedProjectId) return;
+          ensureConversation(selectedProjectId);
+          updateCurrent((conversation) => ({
+            ...conversation,
+            ...(modelOverride ? { modelOverride } : { modelOverride: undefined }),
+          }));
+          useChat
+            .getState()
+            .set({ stale: true, contextUsage: undefined });
+          persistChats();
+          void assistantReset();
+        }}
         onSend={(text, ids, skills, attachments) =>
           sendMessage(text, ids, skills, attachments)
         }
