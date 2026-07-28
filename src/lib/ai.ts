@@ -1,8 +1,8 @@
 import type {
   AiModelRef,
   AiRequestContext,
-  AiUseCase,
 } from "@/shared/ai-config";
+import type { OneShotUseCase } from "@/shared/ai-prompts";
 import {
   bridge,
   type AssistantAttachmentPayload,
@@ -11,15 +11,13 @@ import {
 
 /** 一次性 agent 调用（pi SDK，主进程内），返回纯文本回复 */
 export async function runAgent(opts: {
-  useCase: Exclude<AiUseCase, "assistant">;
-  system?: string;
+  useCase: OneShotUseCase;
   prompt: string;
   context?: AiRequestContext;
 }): Promise<string> {
   if (!bridge) throw new Error("AI 能力仅在桌面应用中可用");
   return bridge.runAgent(
     opts.useCase,
-    opts.system ?? null,
     opts.prompt,
     opts.context
   );
@@ -27,7 +25,6 @@ export async function runAgent(opts: {
 
 /** 通过常驻 pi SDK 会话发送消息，全事件流式回调（文本/思考/工具），回合结束 resolve。 */
 export async function assistantSend(
-  system: string,
   message: string,
   projectId: string,
   attachments: AssistantAttachmentPayload[],
@@ -56,7 +53,6 @@ export async function assistantSend(
     );
     b.assistantSend(
       requestId,
-      system,
       message,
       projectId,
       attachments,
@@ -106,8 +102,7 @@ export function extractJson<T>(text: string): T {
 }
 
 export async function runAgentJson<T>(opts: {
-  useCase: Exclude<AiUseCase, "assistant">;
-  system?: string;
+  useCase: OneShotUseCase;
   prompt: string;
   context?: AiRequestContext;
 }): Promise<T> {

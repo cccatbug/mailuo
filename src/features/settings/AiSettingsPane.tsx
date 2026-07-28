@@ -289,7 +289,7 @@ function ProviderPane({
   onSave: (nextConfig?: AiConfigV1) => Promise<void>;
 }) {
   const snapshot = useAiConfigStore((state) => state.snapshot);
-  const saveCredential = useAiConfigStore((state) => state.saveCredential);
+  const saveProvider = useAiConfigStore((state) => state.saveProvider);
   const deleteCredential = useAiConfigStore((state) => state.deleteCredential);
   const discover = useAiConfigStore((state) => state.discover);
   const testProvider = useAiConfigStore((state) => state.testProvider);
@@ -341,16 +341,7 @@ function ProviderPane({
     if (!provider) return;
     setBusy("save");
     try {
-      await onSave();
-      if (
-        provider.authMode === "none" ||
-        credential.apiKey?.trim() ||
-        Object.values(credential.secretHeaders ?? {}).some((value) =>
-          value.trim()
-        )
-      ) {
-        await saveCredential(provider, credential);
-      }
+      await saveProvider(config, provider, credential);
       setCredentials((current) => ({ ...current, [provider.id]: {} }));
       toast.success("Provider 配置已保存");
     } catch (error) {
@@ -846,16 +837,17 @@ function ProviderPane({
                 <>
                   <ToggleField
                     checked={
-                      provider.compat?.anthropic?.supportsPromptCaching ?? false
+                      provider.compat?.anthropic
+                        ?.supportsCacheControlOnTools ?? false
                     }
-                    label="Prompt caching"
+                    label="Tool cache control"
                     onChange={(value) =>
                       updateProvider({
                         compat: {
                           ...provider.compat,
                           anthropic: {
                             ...provider.compat?.anthropic,
-                            supportsPromptCaching: value,
+                            supportsCacheControlOnTools: value,
                           },
                         },
                       })
@@ -863,54 +855,36 @@ function ProviderPane({
                   />
                   <ToggleField
                     checked={
-                      provider.compat?.anthropic?.supportsAdaptiveThinking ??
-                      false
+                      provider.compat?.anthropic?.forceAdaptiveThinking ?? false
                     }
-                    label="Adaptive thinking"
+                    label="强制 Adaptive thinking"
                     onChange={(value) =>
                       updateProvider({
                         compat: {
                           ...provider.compat,
                           anthropic: {
                             ...provider.compat?.anthropic,
-                            supportsAdaptiveThinking: value,
+                            forceAdaptiveThinking: value,
                           },
                         },
                       })
                     }
                   />
                 </>
-              ) : provider.api === "google-generative-ai" ? (
-                <ToggleField
-                  checked={
-                    provider.compat?.google?.supportsThoughtSignatures ?? false
-                  }
-                  label="Thought signatures"
-                  onChange={(value) =>
-                    updateProvider({
-                      compat: {
-                        ...provider.compat,
-                        google: {
-                          ...provider.compat?.google,
-                          supportsThoughtSignatures: value,
-                        },
-                      },
-                    })
-                  }
-                />
-              ) : (
+              ) : provider.api === "openai-responses" ? (
                 <>
                   <ToggleField
                     checked={
-                      provider.compat?.openai?.supportsDeveloperRole ?? false
+                      provider.compat?.openaiResponses
+                        ?.supportsDeveloperRole ?? false
                     }
                     label="Developer role"
                     onChange={(value) =>
                       updateProvider({
                         compat: {
                           ...provider.compat,
-                          openai: {
-                            ...provider.compat?.openai,
+                          openaiResponses: {
+                            ...provider.compat?.openaiResponses,
                             supportsDeveloperRole: value,
                           },
                         },
@@ -919,15 +893,73 @@ function ProviderPane({
                   />
                   <ToggleField
                     checked={
-                      provider.compat?.openai?.supportsReasoningEffort ?? false
+                      provider.compat?.openaiResponses?.supportsStrictMode ??
+                      false
+                    }
+                    label="Strict tools"
+                    onChange={(value) =>
+                      updateProvider({
+                        compat: {
+                          ...provider.compat,
+                          openaiResponses: {
+                            ...provider.compat?.openaiResponses,
+                            supportsStrictMode: value,
+                          },
+                        },
+                      })
+                    }
+                  />
+                  <ToggleField
+                    checked={
+                      provider.compat?.openaiResponses
+                        ?.supportsExplicitPromptCacheMode ?? false
+                    }
+                    label="Explicit prompt cache"
+                    onChange={(value) =>
+                      updateProvider({
+                        compat: {
+                          ...provider.compat,
+                          openaiResponses: {
+                            ...provider.compat?.openaiResponses,
+                            supportsExplicitPromptCacheMode: value,
+                          },
+                        },
+                      })
+                    }
+                  />
+                </>
+              ) : provider.api === "openai-completions" ? (
+                <>
+                  <ToggleField
+                    checked={
+                      provider.compat?.openaiCompletions
+                        ?.supportsDeveloperRole ?? false
+                    }
+                    label="Developer role"
+                    onChange={(value) =>
+                      updateProvider({
+                        compat: {
+                          ...provider.compat,
+                          openaiCompletions: {
+                            ...provider.compat?.openaiCompletions,
+                            supportsDeveloperRole: value,
+                          },
+                        },
+                      })
+                    }
+                  />
+                  <ToggleField
+                    checked={
+                      provider.compat?.openaiCompletions
+                        ?.supportsReasoningEffort ?? false
                     }
                     label="Reasoning effort"
                     onChange={(value) =>
                       updateProvider({
                         compat: {
                           ...provider.compat,
-                          openai: {
-                            ...provider.compat?.openai,
+                          openaiCompletions: {
+                            ...provider.compat?.openaiCompletions,
                             supportsReasoningEffort: value,
                           },
                         },
@@ -936,15 +968,16 @@ function ProviderPane({
                   />
                   <ToggleField
                     checked={
-                      provider.compat?.openai?.requiresToolResultName ?? false
+                      provider.compat?.openaiCompletions
+                        ?.requiresToolResultName ?? false
                     }
                     label="Tool result name"
                     onChange={(value) =>
                       updateProvider({
                         compat: {
                           ...provider.compat,
-                          openai: {
-                            ...provider.compat?.openai,
+                          openaiCompletions: {
+                            ...provider.compat?.openaiCompletions,
                             requiresToolResultName: value,
                           },
                         },
@@ -954,15 +987,15 @@ function ProviderPane({
                   <Field label="最大输出字段">
                     <Select
                       value={
-                        provider.compat?.openai?.maxTokensField ??
+                        provider.compat?.openaiCompletions?.maxTokensField ??
                         "max_completion_tokens"
                       }
                       onValueChange={(value) =>
                         updateProvider({
                           compat: {
                             ...provider.compat,
-                            openai: {
-                              ...provider.compat?.openai,
+                            openaiCompletions: {
+                              ...provider.compat?.openaiCompletions,
                               maxTokensField: value as
                                 | "max_tokens"
                                 | "max_completion_tokens",
@@ -983,6 +1016,10 @@ function ProviderPane({
                     </Select>
                   </Field>
                 </>
+              ) : (
+                <p className="col-span-2 text-xs text-muted-foreground">
+                  当前协议没有 pi compat 覆盖字段。
+                </p>
               )}
             </div>
           </div>

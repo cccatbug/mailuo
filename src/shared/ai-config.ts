@@ -64,6 +64,15 @@ const headerNameSchema = z
   .trim()
   .min(1)
   .regex(/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/, "Header 名称无效");
+const SENSITIVE_HEADER_NAMES = new Set([
+  "authorization",
+  "proxy-authorization",
+  "x-api-key",
+  "api-key",
+  "x-goog-api-key",
+  "cookie",
+  "set-cookie",
+]);
 
 export const aiModelRefSchema = z
   .object({
@@ -88,11 +97,12 @@ export const aiRequestContextSchema = z
   })
   .strict();
 
-const openAiCompatSchema = z
+const openAiCompletionsCompatSchema = z
   .object({
+    supportsStore: z.boolean().optional(),
     supportsDeveloperRole: z.boolean().optional(),
     supportsReasoningEffort: z.boolean().optional(),
-    supportsReasoningSummary: z.boolean().optional(),
+    supportsUsageInStreaming: z.boolean().optional(),
     supportsStrictMode: z.boolean().optional(),
     maxTokensField: z
       .enum(["max_tokens", "max_completion_tokens"])
@@ -100,32 +110,58 @@ const openAiCompatSchema = z
     requiresToolResultName: z.boolean().optional(),
     requiresAssistantAfterToolResult: z.boolean().optional(),
     requiresThinkingAsText: z.boolean().optional(),
+    requiresReasoningContentOnAssistantMessages: z.boolean().optional(),
     thinkingFormat: z
-      .enum(["openai", "deepseek", "qwen", "zai", "none"])
+      .enum([
+        "openai",
+        "openrouter",
+        "deepseek",
+        "together",
+        "zai",
+        "qwen",
+        "chat-template",
+        "qwen-chat-template",
+        "string-thinking",
+        "ant-ling",
+      ])
+      .optional(),
+    supportsLongCacheRetention: z.boolean().optional(),
+  })
+  .strict();
+
+const openAiResponsesCompatSchema = z
+  .object({
+    supportsDeveloperRole: z.boolean().optional(),
+    supportsLongCacheRetention: z.boolean().optional(),
+    supportsStrictMode: z.boolean().optional(),
+    supportsOpenAIGrammarTools: z.boolean().optional(),
+    supportsToolSearch: z.boolean().optional(),
+    supportsExplicitPromptCacheMode: z.boolean().optional(),
+    sessionAffinityFormat: z
+      .enum(["openai", "openai-nosession", "openrouter"])
       .optional(),
   })
   .strict();
 
 const anthropicCompatSchema = z
   .object({
-    supportsPromptCaching: z.boolean().optional(),
-    supportsAdaptiveThinking: z.boolean().optional(),
-    supportsInterleavedThinking: z.boolean().optional(),
-  })
-  .strict();
-
-const googleCompatSchema = z
-  .object({
-    supportsThoughtSignatures: z.boolean().optional(),
-    supportsSystemInstruction: z.boolean().optional(),
+    supportsEagerToolInputStreaming: z.boolean().optional(),
+    supportsLongCacheRetention: z.boolean().optional(),
+    sendSessionAffinityHeaders: z.boolean().optional(),
+    supportsCacheControlOnTools: z.boolean().optional(),
+    supportsTemperature: z.boolean().optional(),
+    forceAdaptiveThinking: z.boolean().optional(),
+    allowEmptySignature: z.boolean().optional(),
+    supportsStrictTools: z.boolean().optional(),
+    supportsToolReferences: z.boolean().optional(),
   })
   .strict();
 
 const protocolCompatSchema = z
   .object({
-    openai: openAiCompatSchema.optional(),
+    openaiCompletions: openAiCompletionsCompatSchema.optional(),
+    openaiResponses: openAiResponsesCompatSchema.optional(),
     anthropic: anthropicCompatSchema.optional(),
-    google: googleCompatSchema.optional(),
   })
   .strict();
 
@@ -160,6 +196,15 @@ export const aiProviderConfigSchema = z
           code: "custom",
           message: `Header「${name}」不能同时是普通值和敏感值`,
           path: ["secretHeaderNames"],
+        });
+      }
+    }
+    for (const name of Object.keys(provider.headers)) {
+      if (SENSITIVE_HEADER_NAMES.has(name.toLowerCase())) {
+        ctx.addIssue({
+          code: "custom",
+          message: `敏感 Header「${name}」必须保存到 auth.json`,
+          path: ["headers", name],
         });
       }
     }

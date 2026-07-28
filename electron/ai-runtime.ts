@@ -1,5 +1,12 @@
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import type { Api, Model, ThinkingLevel } from "@earendil-works/pi-ai";
+import type {
+  AnthropicMessagesCompat,
+  Api,
+  Model,
+  OpenAICompletionsCompat,
+  OpenAIResponsesCompat,
+  ThinkingLevel,
+} from "@earendil-works/pi-ai";
 import {
   AI_USE_CASES,
   modelRefKey,
@@ -7,6 +14,7 @@ import {
   type AiConfigSnapshot,
   type AiConfigV1,
   type AiContextProfile,
+  type AiCredentialDraft,
   type AiModelConfig,
   type AiModelRef,
   type AiProviderConfig,
@@ -41,16 +49,27 @@ type RegisteredProviderConfig = Parameters<ModelRuntime["registerProvider"]>[1];
 function protocolCompat(
   provider: AiProviderConfig,
   model: AiModelConfig
-): Model<Api>["compat"] | undefined {
-  const key =
-    provider.api === "anthropic-messages"
-      ? "anthropic"
-      : provider.api === "google-generative-ai"
-        ? "google"
-        : "openai";
-  const base = provider.compat?.[key];
-  const override = model.compat?.[key];
-  return base || override ? ({ ...base, ...override } as Model<Api>["compat"]) : undefined;
+):
+  | OpenAICompletionsCompat
+  | OpenAIResponsesCompat
+  | AnthropicMessagesCompat
+  | undefined {
+  if (provider.api === "openai-completions") {
+    const base = provider.compat?.openaiCompletions;
+    const override = model.compat?.openaiCompletions;
+    return base || override ? { ...base, ...override } : undefined;
+  }
+  if (provider.api === "openai-responses") {
+    const base = provider.compat?.openaiResponses;
+    const override = model.compat?.openaiResponses;
+    return base || override ? { ...base, ...override } : undefined;
+  }
+  if (provider.api === "anthropic-messages") {
+    const base = provider.compat?.anthropic;
+    const override = model.compat?.anthropic;
+    return base || override ? { ...base, ...override } : undefined;
+  }
+  return undefined;
 }
 
 function providerRegistration(
@@ -145,6 +164,34 @@ export class AiRuntimeManager {
     this.state = next;
     applyNetworkConfig(saved.config);
     return saved;
+  }
+
+  async saveProviderConfig(
+    configInput: AiConfigV1,
+    expectedEtag: string | null,
+    providerInput: AiProviderConfig,
+    draft: AiCredentialDraft
+  ): Promise<AiConfigSnapshot> {
+    const config = this.store.validate(configInput);
+    const provider = config.providers.find(
+      (entry) => entry.id === providerInput.id
+    );
+    if (!provider || JSON.stringify(provider) !== JSON.stringify(providerInput)) {
+      throw new Error("Provider 草稿与待保存配置不一致");
+    }
+    const providerId = runtimeProviderId(provider.id);
+    const previous = await this.store.credentials.read(providerId);
+    try {
+      await this.store.saveCredential(provider, draft);
+      return await this.saveConfig(config, expectedEtag);
+    } catch (error) {
+      if (previous) {
+        await this.store.credentials.modify(providerId, async () => previous);
+      } else {
+        await this.store.credentials.delete(providerId);
+      }
+      throw error;
+    }
   }
 
   async listEnabledModels(): Promise<EnabledModelSummary[]> {

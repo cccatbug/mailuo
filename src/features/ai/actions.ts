@@ -2,7 +2,7 @@ import { runAgent, runAgentJson } from "@/lib/ai";
 import { useAppStore } from "@/store/useAppStore";
 import type { Priority, Status, Task } from "@/types";
 import { sanitizeChartSpec, type ChartSpec } from "./AiChart";
-import { sanitizeUiSpec, UI_CATALOG_PROMPT, type UiSpec } from "./uiCatalog";
+import { sanitizeUiSpec, type UiSpec } from "./uiCatalog";
 
 /* ---------- 上下文构造 ---------- */
 
@@ -34,9 +34,6 @@ export function projectContext(projectId: string): string {
   });
   return `项目「${project?.name ?? ""}」当前共 ${list.length} 个任务：\n${lines.join("\n")}`;
 }
-
-const JSON_RULES =
-  "只输出一个 JSON 对象，不要输出任何解释、前言或多余文字。标题用中文，简洁具体（≤16字）。";
 
 /* ---------- 结构化产物 ---------- */
 
@@ -76,7 +73,6 @@ export async function aiPlanProject(
 ): Promise<DraftTask[]> {
   const raw = await runAgentJson<{ tasks?: DraftTask[] }>({
     useCase: "project-plan",
-    system: `你是一名项目规划专家。把用户的目标拆解为可执行任务（默认 5-12 个；若用户明确要求更多数量，按用户要求生成，上限 100 个），并给出任务间的依赖关系（deps 为同批任务的 0 起下标数组，只在确有先后关系时使用，不得成环）。${JSON_RULES}\n输出格式：{"tasks":[{"title":"...","notes":"...","priority":"high|normal|low","deps":[0]}]}`,
     prompt: `目标：${goal}`,
     context: { projectSnapshot: projectContext(projectId) },
   });
@@ -92,7 +88,6 @@ export async function aiBreakdownTask(taskId: string): Promise<DraftTask[]> {
   if (!task) throw new Error("任务不存在");
   const raw = await runAgentJson<{ tasks?: DraftTask[] }>({
     useCase: "task-breakdown",
-    system: `你是一名任务拆解专家。把给定任务拆解为更小的、可直接着手的子步骤（默认 3-8 个；用户有明确数量要求时按要求，上限 50 个）（它们都是完成原任务的前置工作），并给出子步骤之间的依赖（deps 为 0 起下标，不得成环）。${JSON_RULES}\n输出格式：{"tasks":[{"title":"...","notes":"...","priority":"high|normal|low","deps":[]}]}`,
     prompt: "请拆解上下文中的目标任务。",
     context: {
       projectSnapshot: projectContext(task.projectId),
@@ -161,7 +156,6 @@ export async function aiSuggestDeps(
     suggestions?: { from?: string; to?: string; reason?: string }[];
   }>({
     useCase: "dependency-suggest",
-    system: `你是一名项目依赖分析专家。分析任务清单，找出缺失的前后置依赖关系（to 依赖 from，即 from 须先完成）。只提出高置信度的建议，最多 6 条，不得与已有依赖重复、不得成环。${JSON_RULES}\n输出格式：{"suggestions":[{"from":"T1","to":"T3","reason":"一句话理由"}]}`,
     prompt: "请分析项目任务的缺失依赖。",
     context: { projectSnapshot: projectContext(projectId) },
   });
@@ -195,8 +189,6 @@ export async function aiPolishNotes(taskId: string): Promise<string> {
   if (!task) throw new Error("任务不存在");
   const text = await runAgent({
     useCase: "notes-polish",
-    system:
-      "你是一名干练的中文写作助手。为任务撰写或润色一段简洁、可执行的备注，务必使用 Markdown 格式（不可输出纯文本）：**加粗**一句话目标开头，然后用短列表（-）写关键步骤或验收标准，控制在可扫读的长度。如有相关链接以 [描述](url) 格式附在末尾。120 字以内。只输出备注正文，不要任何前言或解释。",
     prompt: "请润色上下文中的任务备注。",
     context: {
       taskDetails: `任务：「${task.title}」\n现有备注：${task.notes || "（空）"}`,
@@ -327,8 +319,7 @@ export const ASSISTANT_SYSTEM = `你是「小枢」（英文名 Shu），「脉�
 \`\`\`mailuo-ui
 {"root":"card1","elements":{"card1":{"type":"Card","props":{"title":"进度总览"},"children":["p1"]},"p1":{"type":"Progress","props":{"label":"整体完成率","percent":40},"children":[]}}}
 \`\`\`
-可用组件目录：
-${UI_CATALOG_PROMPT}
+可用组件目录：Card、Row、Stat、Text、Badge、List、Table、Progress、Callout、Divider。
 内容必须来自任务快照的真实数据。简单回答用纯文字即可，不要滥用界面块。`;
 
 /** 从助手回复中拆出正文、操作列表、图表与结构化界面 */

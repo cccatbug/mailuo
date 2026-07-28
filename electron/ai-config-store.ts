@@ -52,6 +52,110 @@ function hash(content: string): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function picked(
+  source: Record<string, unknown>,
+  keys: readonly string[]
+): Record<string, unknown> {
+  return Object.fromEntries(
+    keys.filter((key) => key in source).map((key) => [key, source[key]])
+  );
+}
+
+/**
+ * Normalizes the short-lived pre-release V1 compat keys written by development
+ * builds. This only touches the app's own config document and never imports pi
+ * CLI configuration.
+ */
+function normalizeLegacyV1Compat(input: unknown): unknown {
+  const root = record(input);
+  if (root?.version !== 1) return input;
+  const clone = structuredClone(root);
+  const providers = Array.isArray(clone.providers) ? clone.providers : [];
+  const providerApis = new Map<string, string>();
+  for (const value of providers) {
+    const provider = record(value);
+    if (
+      provider &&
+      typeof provider.id === "string" &&
+      typeof provider.api === "string"
+    ) {
+      providerApis.set(provider.id, provider.api);
+    }
+  }
+  const entries = [
+    ...providers.map((value) => ({
+      value,
+      api: record(value)?.api,
+    })),
+    ...(Array.isArray(clone.models) ? clone.models : []).map((value) => ({
+      value,
+      api: providerApis.get(String(record(value)?.providerId ?? "")),
+    })),
+  ];
+  for (const entry of entries) {
+    const target = record(entry.value);
+    const compat = record(target?.compat);
+    if (!target || !compat) continue;
+    const next: Record<string, unknown> = { ...compat };
+    const legacyOpenAi = record(compat.openai);
+    if (legacyOpenAi) {
+      if (entry.api === "openai-responses") {
+        next.openaiResponses = picked(legacyOpenAi, [
+          "supportsDeveloperRole",
+          "supportsStrictMode",
+        ]);
+      } else if (entry.api === "openai-completions") {
+        next.openaiCompletions = picked(legacyOpenAi, [
+          "supportsDeveloperRole",
+          "supportsReasoningEffort",
+          "supportsStrictMode",
+          "maxTokensField",
+          "requiresToolResultName",
+          "requiresAssistantAfterToolResult",
+          "requiresThinkingAsText",
+          "thinkingFormat",
+        ]);
+      }
+      delete next.openai;
+    }
+    const legacyAnthropic = record(compat.anthropic);
+    if (
+      legacyAnthropic &&
+      ("supportsPromptCaching" in legacyAnthropic ||
+        "supportsAdaptiveThinking" in legacyAnthropic)
+    ) {
+      next.anthropic = {
+        ...legacyAnthropic,
+        ...("supportsPromptCaching" in legacyAnthropic
+          ? {
+              supportsCacheControlOnTools:
+                legacyAnthropic.supportsPromptCaching,
+            }
+          : {}),
+        ...("supportsAdaptiveThinking" in legacyAnthropic
+          ? {
+              forceAdaptiveThinking:
+                legacyAnthropic.supportsAdaptiveThinking,
+            }
+          : {}),
+      };
+      const anthropic = next.anthropic as Record<string, unknown>;
+      delete anthropic.supportsPromptCaching;
+      delete anthropic.supportsAdaptiveThinking;
+      delete anthropic.supportsInterleavedThinking;
+    }
+    delete next.google;
+    target.compat = next;
+  }
+  return clone;
+}
+
 async function readOptional(file: string): Promise<string | null> {
   try {
     return await fs.readFile(file, "utf8");
@@ -158,7 +262,7 @@ export class AiConfigStore {
         `config.json 不是合法 JSON：${error instanceof Error ? error.message : String(error)}`,
       ]);
     }
-    return this.validate(value);
+    return this.validate(normalizeLegacyV1Compat(value));
   }
 
   validate(input: unknown): AiConfigV1 {
@@ -334,6 +438,7 @@ export class MailuoCredentialStore implements CredentialStore {
   private async readAll(): Promise<Record<string, Credential>> {
     const raw = await readOptional(this.authPath);
     if (raw === null) return {};
+    await fs.chmod(this.authPath, 0o600);
     const parsed = credentialFileSchema.safeParse(JSON.parse(raw));
     if (!parsed.success) {
       throw new Error(`auth.json 无效：${parsed.error.message}`);

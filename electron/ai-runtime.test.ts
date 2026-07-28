@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -165,5 +165,48 @@ describe("AiRuntimeManager", () => {
         },
       }))
     );
+  });
+
+  it("rolls back credentials when atomic Provider saving cannot commit config.json", async () => {
+    const { root, store, manager } = await setup();
+    const config = configured();
+    config.providers[0].authMode = "api-key";
+    config.providers[0].authHeader = true;
+    const initial = await store.save(createDefaultAiConfig(), null);
+    const file = path.join(root, "config.json");
+    await writeFile(file, `${await readFile(file, "utf8")}\n`, "utf8");
+
+    await expect(
+      manager.saveProviderConfig(config, initial.etag, config.providers[0], {
+        apiKey: "must-be-rolled-back",
+      })
+    ).rejects.toThrow("已在应用外修改");
+    expect(
+      await store.credentials.read(
+        runtimeProviderId("a9173512-b61c-4b13-bfe2-f42ea09575e1")
+      )
+    ).toBeUndefined();
+  });
+
+  it("maps only protocol-valid pi compat fields into registered models", async () => {
+    const { store, manager } = await setup();
+    const config = configured();
+    config.providers[0].api = "anthropic-messages";
+    config.providers[0].compat = {
+      anthropic: {
+        forceAdaptiveThinking: true,
+        supportsCacheControlOnTools: false,
+      },
+    };
+    await store.save(config, null);
+    await manager.reload();
+
+    const registered = (await manager.modelRuntime()).getRegisteredProviderConfig(
+      runtimeProviderId(config.providers[0].id)
+    );
+    expect(registered?.models?.[0].compat).toEqual({
+      forceAdaptiveThinking: true,
+      supportsCacheControlOnTools: false,
+    });
   });
 });

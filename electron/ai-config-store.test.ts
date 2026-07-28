@@ -85,6 +85,67 @@ describe("AiConfigStore", () => {
     await expect(store.load()).rejects.toBeInstanceOf(AiConfigValidationError);
     expect(await readFile(file, "utf8")).toBe("{broken");
   });
+
+  it("rejects known sensitive headers from config.json", async () => {
+    const root = await tempRoot();
+    const store = new AiConfigStore(root);
+    const config = createDefaultAiConfig();
+    config.providers.push({
+      id: "a9173512-b61c-4b13-bfe2-f42ea09575e1",
+      name: "Unsafe",
+      preset: "custom",
+      enabled: true,
+      baseUrl: "https://example.com/v1",
+      api: "openai-completions",
+      authMode: "none",
+      authHeader: false,
+      headers: { Authorization: "Bearer must-not-be-persisted" },
+      secretHeaderNames: [],
+      discovery: { adapter: "manual" },
+    });
+
+    await expect(store.save(config, null)).rejects.toThrow(
+      "必须保存到 auth.json"
+    );
+  });
+
+  it("normalizes pre-release V1 compat keys without reading external config", async () => {
+    const root = await tempRoot();
+    const store = new AiConfigStore(root);
+    const config = createDefaultAiConfig() as unknown as Record<string, unknown>;
+    const providerId = "a9173512-b61c-4b13-bfe2-f42ea09575e1";
+    config.providers = [
+      {
+        id: providerId,
+        name: "Legacy",
+        preset: "custom",
+        enabled: true,
+        baseUrl: "https://example.com/v1",
+        api: "openai-responses",
+        authMode: "none",
+        authHeader: false,
+        headers: {},
+        secretHeaderNames: [],
+        discovery: { adapter: "manual" },
+        compat: {
+          openai: {
+            supportsDeveloperRole: true,
+            supportsReasoningEffort: true,
+          },
+        },
+      },
+    ];
+    await writeFile(
+      path.join(root, "config.json"),
+      JSON.stringify(config),
+      "utf8"
+    );
+
+    const loaded = await store.load();
+    expect(loaded.config.providers[0].compat).toEqual({
+      openaiResponses: { supportsDeveloperRole: true },
+    });
+  });
 });
 
 describe("MailuoCredentialStore", () => {
@@ -113,5 +174,23 @@ describe("MailuoCredentialStore", () => {
     expect(await credentials.list()).toEqual([
       { providerId, type: "api_key" },
     ]);
+  });
+
+  it("repairs permissive auth.json permissions when loading existing credentials", async () => {
+    const root = await tempRoot();
+    const file = path.join(root, "auth.json");
+    await writeFile(
+      file,
+      '{"mailuo-provider":{"type":"api_key","key":"secret"}}',
+      { encoding: "utf8", mode: 0o644 }
+    );
+    await (await import("node:fs/promises")).chmod(file, 0o644);
+
+    const credentials = new MailuoCredentialStore(file);
+    expect(await credentials.read("mailuo-provider")).toEqual({
+      type: "api_key",
+      key: "secret",
+    });
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
   });
 });

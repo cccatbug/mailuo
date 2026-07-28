@@ -9,12 +9,12 @@ import type {
   AiModelRef,
   AiProviderConfig,
   AiRequestContext,
-  AiUseCase,
   AuthStatus,
   DiscoveredModel,
   EnabledModelSummary,
   RouteResolutionStatus,
 } from "@/shared/ai-config";
+import type { OneShotUseCase } from "@/shared/ai-prompts";
 
 export type {
   AssistantAttachmentMeta,
@@ -33,14 +33,12 @@ export interface MailuoApi {
   openDataDir: () => Promise<string>;
   listModels: () => Promise<EnabledModelSummary[]>;
   runAgent: (
-    useCase: AiUseCase,
-    system: string | null,
+    useCase: OneShotUseCase,
     prompt: string,
     context?: AiRequestContext
   ) => Promise<string>;
   assistantSend: (
     requestId: string,
-    system: string,
     message: string,
     projectId: string,
     attachments: AssistantAttachmentPayload[],
@@ -52,6 +50,12 @@ export interface MailuoApi {
   saveAiConfig: (
     config: AiConfigV1,
     etag: string | null
+  ) => Promise<AiConfigSnapshot>;
+  saveAiProvider: (
+    config: AiConfigV1,
+    etag: string | null,
+    provider: AiProviderConfig,
+    draft: AiCredentialDraft
   ) => Promise<AiConfigSnapshot>;
   saveAiCredential: (
     provider: AiProviderConfig,

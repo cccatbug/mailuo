@@ -10,12 +10,12 @@ import type {
   AiModelRef,
   AiProviderConfig,
   AiRequestContext,
-  AiUseCase,
   AuthStatus,
   DiscoveredModel,
   EnabledModelSummary,
   RouteResolutionStatus,
 } from "../src/shared/ai-config";
+import type { OneShotUseCase } from "../src/shared/ai-prompts";
 
 const api = {
   platform: process.platform as NodeJS.Platform,
@@ -30,16 +30,14 @@ const api = {
     ipcRenderer.invoke("agent:models"),
 
   runAgent: (
-    useCase: AiUseCase,
-    system: string | null,
+    useCase: OneShotUseCase,
     prompt: string,
     context?: AiRequestContext
   ): Promise<string> =>
-    ipcRenderer.invoke("agent:run", useCase, system, prompt, context),
+    ipcRenderer.invoke("agent:run", useCase, prompt, context),
 
   assistantSend: (
     requestId: string,
-    system: string,
     message: string,
     projectId: string,
     attachments: AssistantAttachmentPayload[],
@@ -49,7 +47,6 @@ const api = {
     ipcRenderer.invoke(
       "assistant:send",
       requestId,
-      system,
       message,
       projectId,
       attachments,
@@ -66,6 +63,13 @@ const api = {
     etag: string | null
   ): Promise<AiConfigSnapshot> =>
     ipcRenderer.invoke("ai:config:save", config, etag),
+  saveAiProvider: (
+    config: AiConfigV1,
+    etag: string | null,
+    provider: AiProviderConfig,
+    draft: AiCredentialDraft
+  ): Promise<AiConfigSnapshot> =>
+    ipcRenderer.invoke("ai:provider:save", config, etag, provider, draft),
   saveAiCredential: (
     provider: AiProviderConfig,
     draft: AiCredentialDraft

@@ -28,13 +28,13 @@ import {
   type AiCredentialDraft,
   type AiModelRef,
   type AiRequestContext,
-  type AiUseCase,
 } from "../src/shared/ai-config";
 import {
   cacheDiscoveredModels,
   discoverModels,
   testProviderConnection,
 } from "./model-discovery";
+import type { OneShotUseCase } from "../src/shared/ai-prompts";
 
 const isMac = process.platform === "darwin";
 
@@ -114,6 +114,19 @@ function createWindow() {
 
 /* ---------- IPC ---------- */
 
+async function resolveProviderDraft(
+  providerInput: unknown,
+  draft: AiCredentialDraft
+) {
+  const provider = aiProviderConfigSchema.parse(providerInput);
+  const credentialDraft = aiCredentialDraftSchema.parse(draft ?? {});
+  const credential = await AI_CONFIG.resolveCredential(
+    provider,
+    credentialDraft
+  );
+  return { provider, credential };
+}
+
 function registerIpc() {
   ipcMain.handle("state:load", () => loadState());
   ipcMain.handle("state:save", (_e, data: string) => saveState(data));
@@ -132,6 +145,25 @@ function registerIpc() {
     "ai:config:save",
     async (_e, config: AiConfigV1, etag: string | null) => {
       const snapshot = await AI_RUNTIME.saveConfig(config, etag);
+      assistantReset();
+      return snapshot;
+    }
+  );
+  ipcMain.handle(
+    "ai:provider:save",
+    async (
+      _e,
+      configInput: AiConfigV1,
+      etag: string | null,
+      providerInput: unknown,
+      draft: AiCredentialDraft
+    ) => {
+      const snapshot = await AI_RUNTIME.saveProviderConfig(
+        configInput,
+        etag,
+        aiProviderConfigSchema.parse(providerInput),
+        aiCredentialDraftSchema.parse(draft ?? {})
+      );
       assistantReset();
       return snapshot;
     }
@@ -161,11 +193,9 @@ function registerIpc() {
       providerInput: unknown,
       draft: AiCredentialDraft
     ) => {
-      const provider = aiProviderConfigSchema.parse(providerInput);
-      const credentialDraft = aiCredentialDraftSchema.parse(draft ?? {});
-      const credential = await AI_CONFIG.resolveCredential(
-        provider,
-        credentialDraft
+      const { provider, credential } = await resolveProviderDraft(
+        providerInput,
+        draft
       );
       return testProviderConnection(provider, credential);
     }
@@ -177,11 +207,9 @@ function registerIpc() {
       providerInput: unknown,
       draft: AiCredentialDraft
     ) => {
-      const provider = aiProviderConfigSchema.parse(providerInput);
-      const credentialDraft = aiCredentialDraftSchema.parse(draft ?? {});
-      const credential = await AI_CONFIG.resolveCredential(
-        provider,
-        credentialDraft
+      const { provider, credential } = await resolveProviderDraft(
+        providerInput,
+        draft
       );
       const models = await discoverModels(provider, credential);
       await cacheDiscoveredModels(
@@ -235,17 +263,20 @@ function registerIpc() {
     "agent:run",
     (
       _e,
-      useCase: AiUseCase,
-      system: string | null,
+      useCase: OneShotUseCase,
       prompt: string,
       context: AiRequestContext | undefined
-    ) =>
-      runOneShot(
-        aiUseCaseSchema.parse(useCase),
-        system,
+    ) => {
+      const parsedUseCase = aiUseCaseSchema.parse(useCase);
+      if (parsedUseCase === "assistant") {
+        throw new Error("assistant 只能通过专用会话接口调用");
+      }
+      return runOneShot(
+        parsedUseCase,
         prompt,
         context ? aiRequestContextSchema.parse(context) : undefined
-      )
+      );
+    }
   );
 
   ipcMain.handle(
@@ -253,7 +284,6 @@ function registerIpc() {
     (
       e,
       requestId: string,
-      system: string,
       message: string,
       projectId: string,
       attachments: AssistantAttachmentPayload[],
@@ -261,7 +291,6 @@ function registerIpc() {
       modelOverride: AiModelRef | null | undefined
     ) =>
       assistantSend(
-        system,
         message,
         projectId ?? "default",
         attachments ?? [],

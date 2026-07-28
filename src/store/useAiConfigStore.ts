@@ -19,6 +19,11 @@ interface AiConfigStoreState {
   load: () => Promise<AiConfigSnapshot>;
   reload: () => Promise<AiConfigSnapshot>;
   save: (config: AiConfigV1) => Promise<AiConfigSnapshot>;
+  saveProvider: (
+    config: AiConfigV1,
+    provider: AiProviderConfig,
+    draft: AiCredentialDraft
+  ) => Promise<AiConfigSnapshot>;
   saveCredential: (
     provider: AiProviderConfig,
     draft: AiCredentialDraft
@@ -84,6 +89,24 @@ export const useAiConfigStore = create<AiConfigStoreState>((set, get) => ({
       const snapshot = await nativeBridge().saveAiConfig(
         config,
         get().snapshot?.etag ?? null
+      );
+      set({ snapshot, saving: false });
+      notifyRuntimeChanged();
+      return snapshot;
+    } catch (error) {
+      set({ saving: false, error: String(error) });
+      throw error;
+    }
+  },
+
+  saveProvider: async (config, provider, draft) => {
+    set({ saving: true, error: null });
+    try {
+      const snapshot = await nativeBridge().saveAiProvider(
+        config,
+        get().snapshot?.etag ?? null,
+        provider,
+        draft
       );
       set({ snapshot, saving: false });
       notifyRuntimeChanged();

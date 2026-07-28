@@ -28,7 +28,6 @@ import { useAppStore } from "@/store/useAppStore";
 import { openFilePanel } from "@/components/DockLayout";
 import {
   applyAssistantOps,
-  ASSISTANT_SYSTEM,
   parseAssistantReply,
   projectContext,
   type AssistantOp,
@@ -422,7 +421,6 @@ async function completeAssistantTurn({
 
   try {
     await assistantSend(
-      ASSISTANT_SYSTEM,
       agentText,
       projectId,
       attachmentPayloads,

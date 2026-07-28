@@ -20,7 +20,6 @@ import type {
   AiContextProfile,
   AiModelRef,
   AiRequestContext,
-  AiUseCase,
 } from "../src/shared/ai-config";
 import { AiConfigStore } from "./ai-config-store";
 import {
@@ -28,6 +27,11 @@ import {
   type ResolvedAiRoute,
 } from "./ai-runtime";
 import { assembleAiContext } from "./context-assembly";
+import {
+  ASSISTANT_SYSTEM_PROMPT,
+  ONE_SHOT_SYSTEM_PROMPTS,
+  type OneShotUseCase,
+} from "../src/shared/ai-prompts";
 
 export type AssistantEvent = AssistantEventPayload;
 
@@ -408,15 +412,14 @@ async function prepareAttachments(
 /* ---------- 一次性调用 ---------- */
 
 export async function runOneShot(
-  useCase: AiUseCase,
-  system: string | null,
+  useCase: OneShotUseCase,
   prompt: string,
   requestContext?: AiRequestContext
 ): Promise<string> {
   const resolved = await AI_RUNTIME.resolve(useCase);
   const assembled = await buildPrompt(
     resolved,
-    system ?? "You are a helpful assistant.",
+    ONE_SHOT_SYSTEM_PROMPTS[useCase],
     prompt,
     requestContext
   );
@@ -462,7 +465,6 @@ function configKey(
 }
 
 export async function assistantSend(
-  system: string,
   message: string,
   projectId: string,
   attachments: AssistantAttachmentPayload[],
@@ -474,7 +476,7 @@ export async function assistantSend(
   const resolved = await AI_RUNTIME.resolve("assistant", modelOverride);
   const assembled = await buildPrompt(
     resolved,
-    system,
+    ASSISTANT_SYSTEM_PROMPT,
     message,
     requestContext
   );
