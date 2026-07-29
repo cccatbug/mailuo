@@ -208,6 +208,29 @@ function createProvider(preset: AiProviderPreset): AiProviderConfig {
   };
 }
 
+function baseUrlForProtocol(
+  provider: AiProviderConfig,
+  api: AiApiType
+): string {
+  if (provider.preset !== "deepseek") return provider.baseUrl;
+  try {
+    const url = new URL(provider.baseUrl);
+    if (url.hostname !== "api.deepseek.com") return provider.baseUrl;
+    const path = url.pathname.replace(/\/+$/, "") || "/";
+    if (api === "anthropic-messages" && (path === "/" || path === "/v1")) {
+      url.pathname = "/anthropic";
+      return url.toString().replace(/\/$/, "");
+    }
+    if (api === "openai-completions" && path === "/anthropic") {
+      url.pathname = "/";
+      return url.toString().replace(/\/$/, "");
+    }
+  } catch {
+    // 表单保存时由共享 Zod schema 校验 URL。
+  }
+  return provider.baseUrl;
+}
+
 function Field({
   label,
   description,
@@ -355,7 +378,10 @@ function ProviderPane({
     if (!provider) return;
     setBusy("test");
     try {
-      const result = await testProvider(provider, credential);
+      const modelId = config.models.find(
+        (model) => model.providerId === provider.id && model.enabled
+      )?.modelId;
+      const result = await testProvider(provider, credential, modelId);
       toast.success(result.message);
     } catch (error) {
       toast.error("连接测试失败", { description: String(error) });
@@ -564,9 +590,13 @@ function ProviderPane({
             <Field label="消息协议">
               <Select
                 value={provider.api}
-                onValueChange={(value) =>
-                  updateProvider({ api: value as AiApiType })
-                }
+                onValueChange={(value) => {
+                  const api = value as AiApiType;
+                  updateProvider({
+                    api,
+                    baseUrl: baseUrlForProtocol(provider, api),
+                  });
+                }}
               >
                 <SelectTrigger size="sm">
                   <SelectValue />

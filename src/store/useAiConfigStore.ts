@@ -35,7 +35,8 @@ interface AiConfigStoreState {
   ) => Promise<DiscoveredModel[]>;
   testProvider: (
     provider: AiProviderConfig,
-    draft: AiCredentialDraft
+    draft: AiCredentialDraft,
+    modelId?: string
   ) => Promise<{ ok: true; message: string }>;
 }
 
@@ -171,6 +172,6 @@ export const useAiConfigStore = create<AiConfigStoreState>((set, get) => ({
     }));
     return models;
   },
-  testProvider: (provider, draft) =>
-    nativeBridge().testAiProvider(provider, draft),
+  testProvider: (provider, draft, modelId) =>
+    nativeBridge().testAiProvider(provider, draft, modelId),
 }));

@@ -209,4 +209,23 @@ describe("AiRuntimeManager", () => {
       supportsCacheControlOnTools: false,
     });
   });
+
+  it("uses DeepSeek's Anthropic-compatible endpoint for the official base URL", async () => {
+    const { store, manager } = await setup();
+    const config = configured();
+    config.providers[0] = {
+      ...config.providers[0],
+      preset: "deepseek",
+      baseUrl: "https://api.deepseek.com",
+      api: "anthropic-messages",
+      discovery: { adapter: "anthropic" },
+    };
+    await store.save(config, null);
+    await manager.reload();
+
+    const registered = (await manager.modelRuntime()).getRegisteredProviderConfig(
+      runtimeProviderId(config.providers[0].id)
+    );
+    expect(registered?.baseUrl).toBe("https://api.deepseek.com/anthropic");
+  });
 });

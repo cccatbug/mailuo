@@ -64,7 +64,8 @@ export interface MailuoApi {
   deleteAiCredential: (providerId: string) => Promise<void>;
   testAiProvider: (
     provider: AiProviderConfig,
-    draft: AiCredentialDraft
+    draft: AiCredentialDraft,
+    modelId?: string
   ) => Promise<{ ok: true; message: string }>;
   discoverAiModels: (
     provider: AiProviderConfig,

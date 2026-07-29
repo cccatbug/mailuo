@@ -1,12 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import type { Credential } from "@earendil-works/pi-ai";
+import type { Credential, CredentialStore } from "@earendil-works/pi-ai";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type {
+  AiModelConfig,
   AiProviderConfig,
   DiscoveredModel,
 } from "../src/shared/ai-config";
+import { runtimeProviderId } from "../src/shared/ai-config";
 import { secretHeaderEnvName } from "./ai-config-store";
+import { providerRegistration } from "./ai-runtime";
 
 const INFERRED_CONTEXT_WINDOW = 128_000;
 const INFERRED_MAX_TOKENS = 16_384;
@@ -26,6 +30,10 @@ export interface DiscoveryOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
   fetch?: typeof globalThis.fetch;
+}
+
+export interface ProviderTestOptions extends DiscoveryOptions {
+  modelId?: string;
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -362,8 +370,17 @@ export async function cacheDiscoveredModels(
 export async function testProviderConnection(
   provider: AiProviderConfig,
   credential?: Credential,
-  options: DiscoveryOptions = {}
+  options: ProviderTestOptions = {}
 ): Promise<{ ok: true; message: string }> {
+  if (options.modelId?.trim()) {
+    await testProviderMessages(
+      provider,
+      credential,
+      options.modelId.trim(),
+      options
+    );
+    return { ok: true, message: "连接及流式消息成功" };
+  }
   if (provider.discovery.adapter !== "manual") {
     const models = await discoverModels(provider, credential, options);
     return { ok: true, message: `连接成功，发现 ${models.length} 个模型` };
@@ -382,6 +399,108 @@ export async function testProviderConnection(
       );
     }
     return { ok: true, message: "连接成功" };
+  } finally {
+    lifecycle.dispose();
+  }
+}
+
+function draftCredentialStore(
+  providerId: string,
+  initial?: Credential
+): CredentialStore {
+  let credential = initial;
+  return {
+    read: async (id) => (id === providerId ? credential : undefined),
+    list: async () =>
+      credential
+        ? [{ providerId, type: credential.type }]
+        : [],
+    modify: async (id, update) => {
+      if (id !== providerId) return undefined;
+      const next = await update(credential);
+      if (next !== undefined) credential = next;
+      return credential;
+    },
+    delete: async (id) => {
+      if (id === providerId) credential = undefined;
+    },
+  };
+}
+
+async function testProviderMessages(
+  provider: AiProviderConfig,
+  credential: Credential | undefined,
+  modelId: string,
+  options: ProviderTestOptions
+): Promise<void> {
+  const lifecycle = createSignal(options.signal, options.timeoutMs ?? 15_000);
+  const piProviderId = runtimeProviderId(provider.id);
+  try {
+    const runtime = await ModelRuntime.create({
+      credentials: draftCredentialStore(piProviderId, credential),
+      modelsPath: null,
+      allowModelNetwork: false,
+    });
+    const modelConfig: AiModelConfig = {
+      providerId: provider.id,
+      modelId,
+      name: modelId,
+      enabled: true,
+      input: ["text"],
+      reasoning: false,
+      contextWindow: INFERRED_CONTEXT_WINDOW,
+      maxTokens: Math.min(INFERRED_MAX_TOKENS, 64),
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      metadataSource: "inferred",
+      remoteStatus: "unknown",
+    };
+    runtime.registerProvider(
+      piProviderId,
+      providerRegistration(provider, [modelConfig])
+    );
+    const model = runtime.getModel(piProviderId, modelId);
+    if (!model) throw new Error("测试模型未注册到临时运行时");
+
+    const stream = runtime.streamSimple(
+      model,
+      {
+        systemPrompt: "You are a connection test. Reply only with OK.",
+        messages: [
+          {
+            role: "user",
+            content: "Reply only with OK.",
+            timestamp: Date.now(),
+          },
+        ],
+      },
+      {
+        signal: lifecycle.signal,
+        maxRetries: 0,
+      }
+    );
+    let text = "";
+    for await (const event of stream) {
+      if (event.type === "text_delta") text += event.delta;
+    }
+    const result = await stream.result();
+    if (result.stopReason === "error" || result.stopReason === "aborted") {
+      throw new Error(result.errorMessage || "模型消息请求失败");
+    }
+    if (!text.trim()) {
+      text = result.content
+        .flatMap((item) => (item.type === "text" ? [item.text] : []))
+        .join("");
+    }
+    if (!text.trim()) throw new Error("模型消息端点返回了空回复");
+  } catch (error) {
+    if (lifecycle.signal.aborted) {
+      throw new ModelDiscoveryError("消息协议测试已取消或超时");
+    }
+    const message = redact(
+      error instanceof Error ? error.message : String(error),
+      credential
+    );
+    throw new ModelDiscoveryError(`消息协议测试失败：${message}`);
   } finally {
     lifecycle.dispose();
   }

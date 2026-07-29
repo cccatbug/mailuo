@@ -79,9 +79,10 @@ const api = {
     ipcRenderer.invoke("ai:auth:delete", providerId),
   testAiProvider: (
     provider: AiProviderConfig,
-    draft: AiCredentialDraft
+    draft: AiCredentialDraft,
+    modelId?: string
   ): Promise<{ ok: true; message: string }> =>
-    ipcRenderer.invoke("ai:provider:test", provider, draft),
+    ipcRenderer.invoke("ai:provider:test", provider, draft, modelId),
   discoverAiModels: (
     provider: AiProviderConfig,
     draft: AiCredentialDraft

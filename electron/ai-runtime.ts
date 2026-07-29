@@ -72,7 +72,7 @@ function protocolCompat(
   return undefined;
 }
 
-function providerRegistration(
+export function providerRegistration(
   provider: AiProviderConfig,
   models: AiModelConfig[]
 ): RegisteredProviderConfig {
@@ -82,7 +82,7 @@ function providerRegistration(
   }
   return {
     name: provider.name,
-    baseUrl: provider.baseUrl,
+    baseUrl: runtimeBaseUrl(provider),
     api: provider.api,
     ...(provider.authMode === "none" ? { apiKey: "mailuo-no-auth" } : {}),
     authHeader: provider.authHeader,
@@ -104,6 +104,29 @@ function providerRegistration(
         : {}),
     })),
   };
+}
+
+function runtimeBaseUrl(provider: AiProviderConfig): string {
+  if (
+    provider.preset !== "deepseek" ||
+    provider.api !== "anthropic-messages"
+  ) {
+    return provider.baseUrl;
+  }
+  try {
+    const url = new URL(provider.baseUrl);
+    const path = url.pathname.replace(/\/+$/, "") || "/";
+    if (
+      url.hostname === "api.deepseek.com" &&
+      (path === "/" || path === "/v1")
+    ) {
+      url.pathname = "/anthropic";
+      return url.toString().replace(/\/$/, "");
+    }
+  } catch {
+    // Zod validates URLs before runtime construction.
+  }
+  return provider.baseUrl;
 }
 
 function applyNetworkConfig(config: AiConfigV1): void {

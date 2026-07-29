@@ -4,6 +4,7 @@ import type { Credential } from "@earendil-works/pi-ai";
 import {
   discoverModels,
   ModelDiscoveryError,
+  testProviderConnection,
 } from "./model-discovery";
 import type { AiProviderConfig } from "../src/shared/ai-config";
 
@@ -175,5 +176,92 @@ describe("discoverModels", () => {
       expect(message.length).toBeLessThan(1400);
       return true;
     });
+  });
+});
+
+describe("testProviderConnection", () => {
+  it("verifies the configured message protocol with a real streamed turn", async () => {
+    let requestedPath = "";
+    let requestedBody = "";
+    const baseUrl = await serve((request, response) => {
+      requestedPath = request.url ?? "";
+      request.setEncoding("utf8");
+      request.on("data", (chunk) => {
+        requestedBody += chunk;
+      });
+      request.on("end", () => {
+        response.writeHead(200, {
+          "content-type": "text/event-stream",
+          connection: "keep-alive",
+        });
+        const base = {
+          id: "chatcmpl-test",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "chat-model",
+        };
+        response.write(
+          `data: ${JSON.stringify({
+            ...base,
+            choices: [
+              {
+                index: 0,
+                delta: { role: "assistant", content: "" },
+                finish_reason: null,
+              },
+            ],
+          })}\n\n`
+        );
+        response.write(
+          `data: ${JSON.stringify({
+            ...base,
+            choices: [
+              {
+                index: 0,
+                delta: { content: "OK" },
+                finish_reason: null,
+              },
+            ],
+          })}\n\n`
+        );
+        response.write(
+          `data: ${JSON.stringify({
+            ...base,
+            choices: [
+              { index: 0, delta: {}, finish_reason: "stop" },
+            ],
+          })}\n\n`
+        );
+        response.end("data: [DONE]\n\n");
+      });
+    });
+
+    const result = await testProviderConnection(
+      provider({ baseUrl: `${baseUrl}/v1` }),
+      credential,
+      { modelId: "chat-model" }
+    );
+
+    expect(requestedPath).toBe("/v1/chat/completions");
+    expect(JSON.parse(requestedBody)).toMatchObject({
+      model: "chat-model",
+      stream: true,
+    });
+    expect(result.message).toContain("流式消息成功");
+  });
+
+  it("reports a message-endpoint error instead of accepting catalog availability", async () => {
+    const baseUrl = await serve((_request, response) => {
+      response.statusCode = 404;
+      response.end();
+    });
+
+    await expect(
+      testProviderConnection(
+        provider({ baseUrl: `${baseUrl}/v1` }),
+        credential,
+        { modelId: "chat-model" }
+      )
+    ).rejects.toThrow("404");
   });
 });

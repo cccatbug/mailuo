@@ -26,6 +26,7 @@ import {
   AiRuntimeManager,
   type ResolvedAiRoute,
 } from "./ai-runtime";
+import { AgentTurnAccumulator } from "./agent-turn";
 import { assembleAiContext } from "./context-assembly";
 import {
   ASSISTANT_SYSTEM_PROMPT,
@@ -424,18 +425,13 @@ export async function runOneShot(
     requestContext
   );
   const session = await makeSession(resolved, assembled.systemPrompt);
-  let acc = "";
+  const turn = new AgentTurnAccumulator();
   const unsub = session.subscribe((event: AgentSessionEvent) => {
-    if (
-      event.type === "message_update" &&
-      event.assistantMessageEvent.type === "text_delta"
-    ) {
-      acc += event.assistantMessageEvent.delta;
-    }
+    turn.handle(event);
   });
   try {
     await session.prompt(assembled.message);
-    const result = acc.trim();
+    const result = turn.finish();
     if (!result) throw new Error("模型返回了空回复");
     return result;
   } finally {
@@ -511,15 +507,13 @@ export async function assistantSend(
     throw new Error("当前模型不支持图片输入，请切换到支持视觉的模型");
   }
 
+  const turn = new AgentTurnAccumulator({
+    onTextDelta: (text) => emit({ type: "delta", text }),
+    onThinkingDelta: (text) => emit({ type: "thinking", text }),
+  });
   const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
+    turn.handle(event);
     switch (event.type) {
-      case "message_update": {
-        const ame = event.assistantMessageEvent;
-        if (ame.type === "text_delta") emit({ type: "delta", text: ame.delta });
-        else if (ame.type === "thinking_delta")
-          emit({ type: "thinking", text: ame.delta });
-        break;
-      }
       case "tool_execution_start": {
         // write/edit：在截断前解析出目标文件的绝对路径（限 ~/.mailuo 内）
         let file: string | undefined;
@@ -556,6 +550,7 @@ export async function assistantSend(
 
   try {
     await session.prompt(prepared.message, { images: prepared.images });
+    if (!turn.finish()) throw new Error("模型返回了空回复");
     const usage = session.getContextUsage();
     if (usage) {
       emit({

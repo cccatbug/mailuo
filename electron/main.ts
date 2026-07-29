@@ -191,13 +191,16 @@ function registerIpc() {
     async (
       _e,
       providerInput: unknown,
-      draft: AiCredentialDraft
+      draft: AiCredentialDraft,
+      modelId: string | undefined
     ) => {
       const { provider, credential } = await resolveProviderDraft(
         providerInput,
         draft
       );
-      return testProviderConnection(provider, credential);
+      return testProviderConnection(provider, credential, {
+        modelId: modelId?.trim() || undefined,
+      });
     }
   );
   ipcMain.handle(
