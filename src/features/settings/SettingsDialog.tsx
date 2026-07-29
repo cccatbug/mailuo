@@ -134,23 +134,26 @@ function AppearancePane() {
         title={t("appearance.palette")}
         description={t("appearance.paletteDescription")}
       >
-        <div className="grid w-72 grid-cols-2 gap-2">
+        <ToggleGroup
+          type="single"
+          value={themePalette}
+          onValueChange={(value) =>
+            value && setThemePalette(value as ThemePalette)
+          }
+          className="grid w-72 grid-cols-2 gap-2"
+        >
           {palettes.map((palette) => (
-            <button
+            <ToggleGroupItem
               key={palette}
+              value={palette}
               data-palette-preview={palette}
-              className={cn(
-                "flex items-center gap-2 rounded-lg border p-2 text-left text-xs transition-colors hover:bg-accent",
-                themePalette === palette &&
-                  "border-primary bg-accent ring-2 ring-ring/40"
-              )}
-              onClick={() => setThemePalette(palette)}
+              className="h-auto justify-start gap-2 rounded-lg border p-2 text-left text-xs transition-colors hover:bg-accent data-[state=on]:border-primary data-[state=on]:bg-accent data-[state=on]:ring-2 data-[state=on]:ring-ring/40"
             >
               <span className="theme-palette-swatch size-5 shrink-0 rounded-full border" />
               {t(`appearance.${palette}`)}
-            </button>
+            </ToggleGroupItem>
           ))}
-        </div>
+        </ToggleGroup>
       </SettingRow>
 
       <SectionHeading>{t("appearance.interface")}</SectionHeading>

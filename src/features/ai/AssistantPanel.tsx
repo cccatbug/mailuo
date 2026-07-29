@@ -825,7 +825,7 @@ export function AssistantPanel() {
                                   "focus",
                                   mention.tabId
                                 ).catch(() =>
-                                  toast.error("该浏览器标签页已经关闭")
+                                  toast.error(t("browser.closedTab"))
                                 );
                               } else {
                                 useAppStore
@@ -1002,11 +1002,18 @@ export function AssistantPanel() {
                 {t("browser.approvalTitle")}
               </p>
               <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                {approval.tabTitle} · {approval.action}
+                {approval.tabTitle} ·{" "}
+                {t(`browser.actions.${approval.action}`, {
+                  defaultValue: approval.action,
+                })}
                 {approval.target ? ` · ${approval.target}` : ""}
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
-                {approval.reason}
+                {t(
+                  approval.reason === "read-only"
+                    ? "browser.approvalReasonReadOnly"
+                    : "browser.approvalReasonSensitive"
+                )}
               </p>
             </div>
           </div>

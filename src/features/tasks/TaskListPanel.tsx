@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import {
   ArrowDownToDot,
   ArrowUpFromDot,
+  Bot,
   CalendarDays,
   Check,
   ChevronDown,
@@ -524,7 +525,7 @@ export function TaskListPanel({ fixedView }: { fixedView?: ViewMode } = {}) {
               variant="outline"
               onClick={() => useAppStore.getState().setAssistantOpen(true)}
             >
-              <Sparkles data-icon="inline-start" />
+              <Bot data-icon="inline-start" />
               与小枢对话
             </Button>
           </div>

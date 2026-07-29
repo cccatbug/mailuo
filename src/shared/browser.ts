@@ -49,10 +49,18 @@ export interface BrowserSnapshotFrame {
   elements: BrowserSnapshotElement[];
 }
 
+export interface BrowserAccessibilityNode {
+  role: string;
+  name: string;
+  value?: string;
+  description?: string;
+}
+
 export interface BrowserPageSnapshot {
   tab: BrowserTabInfo;
   generation: number;
   frames: BrowserSnapshotFrame[];
+  accessibility: BrowserAccessibilityNode[];
 }
 
 export type BrowserActAction =
@@ -169,7 +177,7 @@ export interface BrowserApprovalRequest {
   tabTitle: string;
   action: string;
   target: string;
-  reason: string;
+  reason: "sensitive" | "read-only";
 }
 
 export interface BrowserApprovalResponse {

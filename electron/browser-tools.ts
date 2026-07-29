@@ -58,13 +58,30 @@ function formatSnapshot(snapshot: BrowserPageSnapshot): string {
         .join("\n");
     })
     .join("\n\n");
+  const accessibility = snapshot.accessibility
+    .map((node) =>
+      [
+        node.role,
+        JSON.stringify(node.name),
+        node.value ? `value=${JSON.stringify(node.value)}` : "",
+        node.description
+          ? `description=${JSON.stringify(node.description)}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" ")
+    )
+    .join("\n");
   return [
     `标签页：${snapshot.tab.id}`,
     `标题：${snapshot.tab.title}`,
     `网址：${snapshot.tab.url}`,
     `快照代次：${snapshot.generation}`,
     frames,
-  ].join("\n");
+    accessibility ? `可访问性结构：\n${accessibility}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 const tabAction = Type.Union([

@@ -110,6 +110,23 @@ export class BrowserSessionManager {
   private browserSession: Session | null = null;
   private readonly configuredContents = new Set<number>();
   private getParentWindow: (() => BrowserWindow | null) | null = null;
+  private approveAgentDownload:
+    | ((
+        webContentsId: number,
+        filename: string,
+        url: string
+      ) => Promise<boolean>)
+    | null = null;
+
+  setAgentDownloadApproval(
+    handler: (
+      webContentsId: number,
+      filename: string,
+      url: string
+    ) => Promise<boolean>
+  ): void {
+    this.approveAgentDownload = handler;
+  }
 
   initialize(getParentWindow: () => BrowserWindow | null) {
     if (this.browserSession) return;
@@ -125,7 +142,7 @@ export class BrowserSessionManager {
   }
 
   private installDownloads(browserSession: Session) {
-    browserSession.on("will-download", (_event, item) => {
+    browserSession.on("will-download", (_event, item, contents) => {
       const original = path.basename(item.getFilename()).replace(/[\u0000-\u001f]/g, "_");
       const parsed = path.parse(original || "download");
       let target = path.join(app.getPath("downloads"), original || "download");
@@ -135,19 +152,37 @@ export class BrowserSessionManager {
           `${parsed.name || "download"}-${index}${parsed.ext}`
         );
       }
-      item.setSavePath(target);
-      this.getParentWindow?.()?.webContents.send("browser:download", {
-        state: "started",
-        filename: path.basename(target),
-        path: target,
-      });
-      item.once("done", (_doneEvent, state) => {
+      const startDownload = () => {
+        item.setSavePath(target);
         this.getParentWindow?.()?.webContents.send("browser:download", {
-          state,
+          state: "started",
           filename: path.basename(target),
           path: target,
         });
-      });
+        item.once("done", (_doneEvent, state) => {
+          this.getParentWindow?.()?.webContents.send("browser:download", {
+            state,
+            filename: path.basename(target),
+            path: target,
+          });
+        });
+        if (item.isPaused()) item.resume();
+      };
+      if (!this.approveAgentDownload) {
+        startDownload();
+        return;
+      }
+      item.pause();
+      void this.approveAgentDownload(
+        contents.id,
+        path.basename(target),
+        item.getURL()
+      )
+        .then((allowed) => {
+          if (allowed) startDownload();
+          else item.cancel();
+        })
+        .catch(() => item.cancel());
     });
   }
 

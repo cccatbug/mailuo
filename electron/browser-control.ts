@@ -1,5 +1,6 @@
 import type {
   BrowserActRequest,
+  BrowserAccessibilityNode,
   BrowserAgentMode,
   BrowserApprovalRequest,
   BrowserCaptureRequest,
@@ -63,6 +64,7 @@ export interface BrowserControlWebContents {
 
 interface RegisteredTab extends BrowserTabRegistration {
   generation: number;
+  nextRef: number;
   refs: Map<
     string,
     {
@@ -75,6 +77,7 @@ interface RegisteredTab extends BrowserTabRegistration {
   >;
   console: BrowserLogEntry[];
   network: BrowserLogEntry[];
+  agentDownloadDeadline: number;
 }
 
 export interface BrowserControlDependencies {
@@ -137,7 +140,7 @@ const SNAPSHOT_SCRIPT = `(() => {
         value: "value" in node ? String(node.value).slice(0, 500) : undefined,
         disabled: Boolean(node.disabled || node.getAttribute("aria-disabled") === "true"),
         checked: "checked" in node ? Boolean(node.checked) : undefined,
-        type: node.getAttribute("type") || undefined
+        type: "type" in node ? String(node.type || "") || undefined : node.getAttribute("type") || undefined
       };
     });
   const root = document.querySelector("article,main,[role=main]") || document.body;
@@ -178,9 +181,11 @@ export class BrowserControlModule {
     this.tabs.set(registration.tabId, {
       ...registration,
       generation: previous?.generation ?? 0,
+      nextRef: previous?.nextRef ?? 0,
       refs: new Map(),
       console: previous?.console ?? [],
       network: previous?.network ?? [],
+      agentDownloadDeadline: previous?.agentDownloadDeadline ?? 0,
     });
     return this.toInfo(this.tabs.get(registration.tabId)!);
   }
@@ -233,6 +238,7 @@ export class BrowserControlModule {
     if (input.action !== "open" && !input.tabId) {
       throw new Error(`${input.action} 需要 tabId`);
     }
+    await this.approveTabCommandIfNeeded(input);
     const result = await this.deps.requestTabCommand({
       action: input.action,
       ...(input.tabId ? { tabId: input.tabId } : {}),
@@ -260,21 +266,20 @@ export class BrowserControlModule {
   }
 
   addConsoleEntry(webContentsId: number, entry: BrowserLogEntry): void {
-    const tab = [...this.tabs.values()].find(
-      (candidate) => candidate.webContentsId === webContentsId
-    );
-    if (!tab) return;
-    tab.console.push(entry);
-    if (tab.console.length > 200) tab.console.splice(0, tab.console.length - 200);
+    this.appendBoundedLog(webContentsId, "console", entry);
   }
 
   addNetworkEntry(webContentsId: number, entry: BrowserLogEntry): void {
+    this.appendBoundedLog(webContentsId, "network", entry);
+  }
+
+  consumeAgentDownloadTab(webContentsId: number): BrowserTabInfo | null {
     const tab = [...this.tabs.values()].find(
       (candidate) => candidate.webContentsId === webContentsId
     );
-    if (!tab) return;
-    tab.network.push(entry);
-    if (tab.network.length > 200) tab.network.splice(0, tab.network.length - 200);
+    if (!tab || tab.agentDownloadDeadline < Date.now()) return null;
+    tab.agentDownloadDeadline = 0;
+    return this.toInfo(tab);
   }
 
   async snapshot(input: { tabId?: string }): Promise<BrowserPageSnapshot> {
@@ -289,7 +294,7 @@ export class BrowserControlModule {
     const uniqueFrames = [
       ...new Map(rawFrames.map((frame) => [frame.frameTreeNodeId, frame])).values(),
     ];
-    let nextRef = 0;
+    let nextRef = tab.nextRef;
     const frames: BrowserSnapshotFrame[] = [];
 
     for (const frame of uniqueFrames) {
@@ -341,11 +346,14 @@ export class BrowserControlModule {
         });
       }
     }
+    tab.nextRef = nextRef;
+    const accessibility = await this.readAccessibilityTree(contents);
 
     return {
       tab: this.toInfo(tab),
       generation: tab.generation,
       frames,
+      accessibility,
     };
   }
 
@@ -453,6 +461,9 @@ export class BrowserControlModule {
       x: request.x,
       y: request.y,
     });
+    if (request.action === "click" || request.action === "double_click") {
+      tab.agentDownloadDeadline = Date.now() + 15_000;
+    }
     return frame.executeJavaScript(`(() => {
       const input = ${payload};
       const node = document.querySelector('[data-mailuo-ref="' + CSS.escape(input.localRef) + '"]');
@@ -640,9 +651,7 @@ export class BrowserControlModule {
       (this.defaultTabIds.length === 1 &&
       available.some((tab) => tab.id === this.defaultTabIds[0])
         ? this.defaultTabIds[0]
-        : available.length === 1
-          ? available[0].id
-          : undefined);
+        : undefined);
     if (!resolvedId) {
       throw new Error("没有可用的内置浏览器标签页，请先打开或指定 tabId");
     }
@@ -678,12 +687,85 @@ export class BrowserControlModule {
       tabTitle: tab.title || "浏览器",
       action,
       target,
-      reason:
-        mode === "read-only"
-          ? "当前浏览器 Agent 模式要求确认所有写操作"
-          : "该操作可能提交数据、修改登录态或产生外部副作用",
+      reason: mode === "read-only" ? "read-only" : "sensitive",
     });
     if (!allowed) throw new Error("用户拒绝了浏览器操作");
+  }
+
+  private async approveTabCommandIfNeeded(input: {
+    action: "list" | "open" | "focus" | "close";
+    tabId?: string;
+    url?: string;
+  }): Promise<void> {
+    if (
+      input.action === "list" ||
+      (this.deps.getApprovalMode?.() ?? "confirm-sensitive") !== "read-only"
+    ) {
+      return;
+    }
+    if (!this.deps.requestApproval) {
+      throw new Error("该浏览器操作需要用户确认，但审批界面不可用");
+    }
+    const tab = input.tabId ? this.tabs.get(input.tabId) : undefined;
+    const allowed = await this.deps.requestApproval({
+      id: crypto.randomUUID(),
+      tabId: input.tabId ?? "browser:new",
+      tabTitle: tab?.title || "浏览器",
+      action: `tab_${input.action}`,
+      target: input.url ?? input.tabId ?? "",
+      reason: "read-only",
+    });
+    if (!allowed) throw new Error("用户拒绝了浏览器操作");
+  }
+
+  private appendBoundedLog(
+    webContentsId: number,
+    key: "console" | "network",
+    entry: BrowserLogEntry
+  ): void {
+    const tab = [...this.tabs.values()].find(
+      (candidate) => candidate.webContentsId === webContentsId
+    );
+    if (!tab) return;
+    tab[key].push(entry);
+    if (tab[key].length > 200) tab[key].splice(0, tab[key].length - 200);
+  }
+
+  private async readAccessibilityTree(
+    contents: BrowserControlWebContents
+  ): Promise<BrowserAccessibilityNode[]> {
+    if (contents.isDevToolsOpened?.() && !contents.debugger.isAttached()) {
+      return [];
+    }
+    try {
+      const result = (await this.withDebugger(contents, (debuggerApi) =>
+        debuggerApi.sendCommand("Accessibility.getFullAXTree")
+      )) as {
+        nodes?: Array<{
+          ignored?: boolean;
+          role?: { value?: unknown };
+          name?: { value?: unknown };
+          value?: { value?: unknown };
+          description?: { value?: unknown };
+        }>;
+      };
+      return (result?.nodes ?? [])
+        .filter((node) => !node.ignored)
+        .map((node) => ({
+          role: String(node.role?.value ?? ""),
+          name: String(node.name?.value ?? ""),
+          ...(node.value?.value !== undefined
+            ? { value: String(node.value.value) }
+            : {}),
+          ...(node.description?.value !== undefined
+            ? { description: String(node.description.value) }
+            : {}),
+        }))
+        .filter((node) => node.role || node.name)
+        .slice(0, 1_000);
+    } catch {
+      return [];
+    }
   }
 
   private isSensitiveAction(

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { migrateThemePreference, resolveThemeMode } from "./theme";
+import {
+  migrateThemePreference,
+  resolveThemeMode,
+  THEME_PALETTES,
+} from "./theme";
 
 describe("theme preferences", () => {
   it("migrates the legacy explicit theme without changing its appearance", () => {
@@ -13,5 +17,14 @@ describe("theme preferences", () => {
     expect(resolveThemeMode("system", true)).toBe("dark");
     expect(resolveThemeMode("system", false)).toBe("light");
     expect(resolveThemeMode("light", true)).toBe("light");
+  });
+
+  it("exposes all four supported global palettes", () => {
+    expect(THEME_PALETTES).toEqual([
+      "paper",
+      "moon",
+      "celadon",
+      "graphite",
+    ]);
   });
 });

@@ -604,6 +604,9 @@ if (!app.requestSingleInstanceLock()) {
 
   void app.whenReady().then(async () => {
     registerIpc();
+    BROWSER_SESSION.setAgentDownloadApproval((webContentsId, filename, url) =>
+      BROWSER_RUNTIME.approveDownload(webContentsId, filename, url)
+    );
     BROWSER_SESSION.initialize(() => win);
     BROWSER_RUNTIME.initialize(() => win);
     createWindow();

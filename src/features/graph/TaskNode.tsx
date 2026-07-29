@@ -41,7 +41,7 @@ export const TaskNode = memo(function TaskNode({
         "task-node-card w-48 rounded-xl border px-3 py-2.5 shadow-sm transition-colors",
         selected && "task-node-selected border-primary ring-2 ring-ring",
         blocked && "border-dashed",
-        done && "opacity-70"
+        done && "task-node-done"
       )}
     >
       <Handle

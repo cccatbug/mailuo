@@ -119,6 +119,24 @@ class BrowserRuntime {
     this.approvalMode = mode;
   }
 
+  async approveDownload(
+    webContentsId: number,
+    filename: string,
+    url: string
+  ): Promise<boolean> {
+    const tab = this.control.consumeAgentDownloadTab(webContentsId);
+    if (!tab) return true;
+    if (this.approvalMode === "always-allow") return true;
+    return this.requestApproval({
+      id: crypto.randomUUID(),
+      tabId: tab.id,
+      tabTitle: tab.title,
+      action: "download",
+      target: `${filename} · ${url}`,
+      reason: "sensitive",
+    });
+  }
+
   settleTabCommand(result: BrowserTabCommandResult): void {
     const pending = this.commands.get(result.requestId);
     if (!pending) return;

@@ -118,30 +118,30 @@
     --viz-doing: #b08415;
     --viz-ready: #4c74b0;
     --viz-blocked: #b5483a;
-    --graph-node-1: oklch(0.58 0.12 20);
-    --graph-node-2: oklch(0.61 0.12 42);
-    --graph-node-3: oklch(0.64 0.11 64);
-    --graph-node-4: oklch(0.66 0.11 86);
-    --graph-node-5: oklch(0.62 0.1 112);
-    --graph-node-6: oklch(0.58 0.1 138);
-    --graph-node-7: oklch(0.57 0.1 164);
-    --graph-node-8: oklch(0.59 0.09 188);
-    --graph-node-9: oklch(0.58 0.09 212);
-    --graph-node-10: oklch(0.57 0.1 236);
-    --graph-node-11: oklch(0.57 0.11 260);
-    --graph-node-12: oklch(0.58 0.11 286);
-    --graph-node-13: oklch(0.6 0.1 312);
-    --graph-node-14: oklch(0.6 0.1 338);
-    --graph-node-15: oklch(0.53 0.08 28);
-    --graph-node-16: oklch(0.55 0.08 55);
-    --graph-node-17: oklch(0.57 0.08 95);
-    --graph-node-18: oklch(0.54 0.08 130);
-    --graph-node-19: oklch(0.52 0.08 175);
-    --graph-node-20: oklch(0.53 0.07 205);
-    --graph-node-21: oklch(0.52 0.08 245);
-    --graph-node-22: oklch(0.53 0.08 278);
-    --graph-node-23: oklch(0.54 0.08 315);
-    --graph-node-24: oklch(0.54 0.08 350);
+    --graph-node-1: color-mix(in oklch, oklch(0.58 0.12 20) 80%, var(--primary));
+    --graph-node-2: color-mix(in oklch, oklch(0.61 0.12 42) 80%, var(--primary));
+    --graph-node-3: color-mix(in oklch, oklch(0.64 0.11 64) 80%, var(--primary));
+    --graph-node-4: color-mix(in oklch, oklch(0.66 0.11 86) 80%, var(--primary));
+    --graph-node-5: color-mix(in oklch, oklch(0.62 0.1 112) 80%, var(--primary));
+    --graph-node-6: color-mix(in oklch, oklch(0.58 0.1 138) 80%, var(--primary));
+    --graph-node-7: color-mix(in oklch, oklch(0.57 0.1 164) 80%, var(--primary));
+    --graph-node-8: color-mix(in oklch, oklch(0.59 0.09 188) 80%, var(--primary));
+    --graph-node-9: color-mix(in oklch, oklch(0.58 0.09 212) 80%, var(--primary));
+    --graph-node-10: color-mix(in oklch, oklch(0.57 0.1 236) 80%, var(--primary));
+    --graph-node-11: color-mix(in oklch, oklch(0.57 0.11 260) 80%, var(--primary));
+    --graph-node-12: color-mix(in oklch, oklch(0.58 0.11 286) 80%, var(--primary));
+    --graph-node-13: color-mix(in oklch, oklch(0.6 0.1 312) 80%, var(--primary));
+    --graph-node-14: color-mix(in oklch, oklch(0.6 0.1 338) 80%, var(--primary));
+    --graph-node-15: color-mix(in oklch, oklch(0.53 0.08 28) 80%, var(--primary));
+    --graph-node-16: color-mix(in oklch, oklch(0.55 0.08 55) 80%, var(--primary));
+    --graph-node-17: color-mix(in oklch, oklch(0.57 0.08 95) 80%, var(--primary));
+    --graph-node-18: color-mix(in oklch, oklch(0.54 0.08 130) 80%, var(--primary));
+    --graph-node-19: color-mix(in oklch, oklch(0.52 0.08 175) 80%, var(--primary));
+    --graph-node-20: color-mix(in oklch, oklch(0.53 0.07 205) 80%, var(--primary));
+    --graph-node-21: color-mix(in oklch, oklch(0.52 0.08 245) 80%, var(--primary));
+    --graph-node-22: color-mix(in oklch, oklch(0.53 0.08 278) 80%, var(--primary));
+    --graph-node-23: color-mix(in oklch, oklch(0.54 0.08 315) 80%, var(--primary));
+    --graph-node-24: color-mix(in oklch, oklch(0.54 0.08 350) 80%, var(--primary));
 }
 
 /* 月白靛蓝 */
@@ -607,6 +607,13 @@
 }
 .task-node-card:hover {
   background: color-mix(in oklch, var(--graph-node-accent) 13%, var(--card));
+}
+.task-node-card.task-node-done {
+  border-color: color-mix(in oklch, var(--graph-node-accent) 28%, var(--border));
+  background: color-mix(in oklch, var(--graph-node-accent) 5%, var(--card));
+  box-shadow:
+    inset 3px 0 0 color-mix(in oklch, var(--graph-node-accent) 48%, transparent),
+    0 1px 2px oklch(0 0 0 / 5%);
 }
 .task-node-card.task-node-selected {
   border-color: var(--primary);
