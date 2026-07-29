@@ -1,5 +1,6 @@
 import {
   Folder,
+  Globe2,
   ListPlus,
   ListTree,
   MessageCircleMore,
@@ -24,6 +25,7 @@ import {
 import { useAppStore } from "@/store/useAppStore";
 import { cn } from "@/lib/utils";
 import { MOD_KEY } from "@/lib/platform";
+import { openBrowserPanel } from "@/components/DockLayout";
 
 export function CommandPalette() {
   const open = useAppStore((s) => s.commandOpen);
@@ -147,6 +149,10 @@ export function CommandPalette() {
         </CommandGroup>
         <CommandSeparator />
         <CommandGroup heading="操作">
+          <CommandItem onSelect={() => run(() => openBrowserPanel())}>
+            <Globe2 />
+            打开浏览器与小枢网页助手
+          </CommandItem>
           <CommandItem onSelect={() => run(() => setSettingsOpen(true))}>
             <Settings />
             打开设置

@@ -5,6 +5,31 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* 覆盖式沉浸滚动条：不预留 gutter，轨道与页面底色融为一体。 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--muted-foreground) 38%, transparent) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  min-height: 32px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--muted-foreground) 32%, transparent);
+  background-clip: padding-box;
+}
+*:hover::-webkit-scrollbar-thumb {
+  background: color-mix(in oklch, var(--muted-foreground) 55%, transparent);
+  background-clip: padding-box;
+}
+
 @theme inline {
     --font-heading: "Songti SC", "STSong", "Noto Serif SC", "Source Han Serif SC", serif;
     --font-sans: 'Geist Variable', -apple-system, "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;

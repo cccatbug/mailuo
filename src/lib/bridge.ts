@@ -31,6 +31,8 @@ export interface MailuoApi {
   saveState: (data: string) => Promise<void>;
   getDataDir: () => Promise<string>;
   openDataDir: () => Promise<string>;
+  openExternal: (url: string) => Promise<void>;
+  openPath: (p: string) => Promise<string>;
   listModels: () => Promise<EnabledModelSummary[]>;
   runAgent: (
     useCase: OneShotUseCase,
@@ -83,6 +85,7 @@ export interface MailuoApi {
   >;
   readFile: (p: string) => Promise<string>;
   readImageDataUrl: (p: string, mimeType: string) => Promise<string>;
+  readDataUrl: (p: string, mimeType: string) => Promise<string>;
   writeFile: (p: string, content: string) => Promise<void>;
   memoryPath: () => Promise<string>;
   memoryAppend: (note: string) => Promise<void>;

@@ -1153,13 +1153,42 @@ function ModelsPane({
     target: AiModelConfig,
     patch: Partial<AiModelConfig>
   ) => {
+    const nextModelId = patch.modelId?.trim();
+    if (
+      nextModelId &&
+      nextModelId !== target.modelId &&
+      config.models.some(
+        (model) =>
+          model.providerId === target.providerId &&
+          model.modelId === nextModelId
+      )
+    ) {
+      toast.error("模型 ID 已存在");
+      return;
+    }
+    const changingId = Boolean(nextModelId && nextModelId !== target.modelId);
     setConfig({
       ...config,
       models: config.models.map((model) =>
         modelRefKey(model) === modelRefKey(target)
-          ? { ...model, ...patch }
+          ? { ...model, ...patch, ...(nextModelId ? { modelId: nextModelId } : {}) }
           : model
       ),
+      routes: changingId
+        ? Object.fromEntries(
+            Object.entries(config.routes).map(([useCase, route]) => [
+              useCase,
+              route.model &&
+              route.model.providerId === target.providerId &&
+              route.model.modelId === target.modelId
+                ? {
+                    ...route,
+                    model: { ...route.model, modelId: nextModelId! },
+                  }
+                : route,
+            ])
+          ) as AiConfigV1["routes"]
+        : config.routes,
     });
   };
   const removeModel = (target: AiModelConfig) => {
@@ -1351,9 +1380,37 @@ function ModelsPane({
                 <Trash2 />
               </Button>
             </div>
-            <p className="mb-2 font-mono text-[10px] text-muted-foreground">
-              {model.modelId}
-            </p>
+            <Field label="Model ID（实际发送给服务商，可按项目兼容需要修改）">
+              <Input
+                key={model.modelId}
+                defaultValue={model.modelId}
+                className="mb-2 h-8 font-mono text-xs"
+                onBlur={(event) => {
+                  const value = event.target.value.trim();
+                  if (!value) {
+                    toast.error("Model ID 不能为空");
+                    event.target.value = model.modelId;
+                    return;
+                  }
+                  if (
+                    value !== model.modelId &&
+                    config.models.some(
+                      (entry) =>
+                        entry.providerId === model.providerId &&
+                        entry.modelId === value
+                    )
+                  ) {
+                    toast.error("模型 ID 已存在");
+                    event.target.value = model.modelId;
+                    return;
+                  }
+                  updateModel(model, { modelId: value });
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") event.currentTarget.blur();
+                }}
+              />
+            </Field>
             <div className="grid grid-cols-4 gap-2">
               <Field label="上下文窗口">
                 <NumberInput

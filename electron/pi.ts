@@ -60,6 +60,10 @@ function assertInHome(p: string): string {
   return resolved;
 }
 
+export function resolveMailuoPath(p: string): string {
+  return assertInHome(p);
+}
+
 export async function readMailuoFile(p: string): Promise<string> {
   return fs.readFile(assertInHome(p), "utf8");
 }
@@ -84,6 +88,22 @@ export async function readMailuoImageDataUrl(
   const detectedMime = detectImageMimeType(bytes);
   if (!detectedMime) throw new Error("文件内容不是受支持的图片");
   return `data:${detectedMime};base64,${bytes.toString("base64")}`;
+}
+
+/** 为 PDF、音视频等工作区附件生成受控 data URL，供 Chromium 原生预览器渲染。 */
+export async function readMailuoDataUrl(
+  p: string,
+  mimeType: string
+): Promise<string> {
+  const safeMime = mimeType.toLowerCase().split(";")[0].trim();
+  const allowed =
+    safeMime === "application/pdf" ||
+    safeMime.startsWith("audio/") ||
+    safeMime.startsWith("video/");
+  if (!allowed) throw new Error("不支持以媒体方式预览此文件");
+  const bytes = await fs.readFile(assertInHome(p));
+  if (bytes.length > 50 * 1024 * 1024) throw new Error("预览文件不能超过 50 MB");
+  return `data:${safeMime};base64,${bytes.toString("base64")}`;
 }
 
 export async function writeMailuoFile(p: string, content: string): Promise<void> {

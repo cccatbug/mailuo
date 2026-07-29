@@ -13,6 +13,8 @@ import {
   memoryPath,
   readMailuoFile,
   readMailuoImageDataUrl,
+  readMailuoDataUrl,
+  resolveMailuoPath,
   runOneShot,
   workspaceDir,
   writeMailuoFile,
@@ -96,6 +98,7 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, "../preload/preload.mjs"),
       sandbox: false,
+      webviewTag: true,
     },
   });
 
@@ -132,6 +135,16 @@ function registerIpc() {
   ipcMain.handle("state:save", (_e, data: string) => saveState(data));
   ipcMain.handle("state:dir", () => app.getPath("userData"));
   ipcMain.handle("state:open-dir", () => shell.openPath(app.getPath("userData")));
+  ipcMain.handle("shell:open-external", (_e, url: string) => {
+    const parsed = new URL(url);
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      throw new Error("只允许打开 HTTP(S) 链接");
+    }
+    return shell.openExternal(parsed.toString());
+  });
+  ipcMain.handle("shell:open-path", (_e, p: string) =>
+    shell.openPath(resolveMailuoPath(p))
+  );
 
   ipcMain.handle("agent:models", () => listModels());
   ipcMain.handle("agent:skills", () => listSkills());
@@ -148,6 +161,10 @@ function registerIpc() {
       assistantReset();
       return snapshot;
     }
+  );
+  ipcMain.handle(
+    "mailuo:read-data-url",
+    (_e, p: string, mimeType: string) => readMailuoDataUrl(p, mimeType)
   );
   ipcMain.handle(
     "ai:provider:save",
@@ -322,6 +339,13 @@ function registerIpc() {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
+  app.on("web-contents-created", (_event, contents) => {
+    // 内嵌浏览器的新窗口统一交给系统浏览器，避免不受 Dock 管理的游离窗口。
+    contents.setWindowOpenHandler(({ url }) => {
+      if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+      return { action: "deny" };
+    });
+  });
   app.on("second-instance", () => {
     if (win) {
       if (win.isMinimized()) win.restore();

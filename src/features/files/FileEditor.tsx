@@ -1,5 +1,14 @@
 import { useEffect, useState } from "react";
-import { Eye, ImageIcon, Pencil, Save } from "lucide-react";
+import {
+  Eye,
+  FileQuestion,
+  ImageIcon,
+  Music2,
+  Pencil,
+  Play,
+  Save,
+  SquareArrowOutUpRight,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -19,9 +28,29 @@ export function FileEditor({
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [preview, setPreview] = useState(path.endsWith(".md"));
-  const isMd = path.endsWith(".md");
-  const isImage = Boolean(mimeType?.startsWith("image/"));
+  const [preview, setPreview] = useState(
+    /\.(?:md|html?)$/i.test(path) ||
+      mimeType === "text/markdown" ||
+      mimeType === "text/html"
+  );
+  const extension = path.split(".").pop()?.toLowerCase() ?? "";
+  const normalizedMime = mimeType?.toLowerCase().split(";")[0] ?? "";
+  const isMd = extension === "md" || normalizedMime === "text/markdown";
+  const isHtml =
+    extension === "html" ||
+    extension === "htm" ||
+    normalizedMime === "text/html";
+  const isImage = normalizedMime.startsWith("image/");
+  const isPdf = extension === "pdf" || normalizedMime === "application/pdf";
+  const isAudio = normalizedMime.startsWith("audio/");
+  const isVideo = normalizedMime.startsWith("video/");
+  const isMedia = isPdf || isAudio || isVideo;
+  const isText =
+    isMd ||
+    isHtml ||
+    normalizedMime.startsWith("text/") ||
+    ["json", "xml", "yaml", "yml", "js", "jsx", "ts", "tsx", "css", "csv", "log"].includes(extension);
+  const isUnknown = !isImage && !isMedia && !isText;
 
   useEffect(() => {
     let cancelled = false;
@@ -30,16 +59,18 @@ export function FileEditor({
     const request =
       isImage && mimeType
         ? bridge?.readImageDataUrl(path, mimeType)
+        : isMedia && mimeType
+          ? bridge?.readDataUrl(path, mimeType)
         : bridge?.readFile(path);
     request
       ?.then((value) => {
         if (cancelled) return;
-        if (isImage) setImageUrl(value);
+        if (isImage || isMedia) setImageUrl(value);
         else setContent(value);
       })
       .catch((e) => {
         if (!cancelled) {
-          if (isImage) setImageUrl("");
+          if (isImage || isMedia) setImageUrl("");
           else setContent("");
           toast.error("读取文件失败", { description: String(e) });
         }
@@ -47,7 +78,7 @@ export function FileEditor({
     return () => {
       cancelled = true;
     };
-  }, [isImage, mimeType, path]);
+  }, [isImage, isMedia, mimeType, path]);
 
   const save = async () => {
     if (content === null) return;
@@ -63,7 +94,7 @@ export function FileEditor({
     }
   };
 
-  if ((isImage && imageUrl === null) || (!isImage && content === null)) {
+  if (((isImage || isMedia) && imageUrl === null) || (!isImage && !isMedia && content === null)) {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
         <Spinner />
@@ -89,7 +120,12 @@ export function FileEditor({
               <ImageIcon className="size-3.5" />
               图片
             </span>
-          ) : isMd ? (
+          ) : isMedia ? (
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              {isAudio ? <Music2 className="size-3.5" /> : <Play className="size-3.5" />}
+              {isPdf ? "PDF" : isAudio ? "音频" : "视频"}
+            </span>
+          ) : isMd || isHtml ? (
             <Button
               variant="ghost"
               size="icon-sm"
@@ -100,7 +136,7 @@ export function FileEditor({
               {preview ? <Pencil /> : <Eye />}
             </Button>
           ) : null}
-          {!isImage && (
+          {!isImage && !isMedia && !isUnknown && (
             <Button
               variant="outline"
               size="sm"
@@ -129,6 +165,27 @@ export function FileEditor({
             图片无法预览
           </div>
         )
+      ) : isPdf && imageUrl ? (
+        <iframe
+          src={imageUrl}
+          title={path.split("/").pop() ?? "PDF"}
+          className="min-h-0 flex-1 border-0 bg-background"
+        />
+      ) : isVideo && imageUrl ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center bg-background p-5">
+          <video src={imageUrl} controls className="max-h-full max-w-full rounded-lg" />
+        </div>
+      ) : isAudio && imageUrl ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center bg-background p-8">
+          <audio src={imageUrl} controls className="w-full max-w-xl" />
+        </div>
+      ) : isHtml && preview ? (
+        <iframe
+          srcDoc={content ?? ""}
+          sandbox="allow-forms allow-modals allow-popups allow-scripts"
+          title={path.split("/").pop() ?? "HTML 预览"}
+          className="min-h-0 flex-1 border-0 bg-white"
+        />
       ) : isMd && preview ? (
         <div
           className="min-h-0 flex-1 cursor-text overflow-y-auto px-5 py-4"
@@ -136,6 +193,18 @@ export function FileEditor({
           title="双击进入编辑"
         >
           <Md text={content ?? ""} />
+        </div>
+      ) : isUnknown ? (
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
+          <FileQuestion className="size-10" />
+          <div className="text-center">
+            <p className="font-medium text-foreground">暂不支持内嵌预览此格式</p>
+            <p className="mt-1 text-xs">{mimeType || "未知文件类型"}</p>
+          </div>
+          <Button variant="outline" size="sm" onClick={() => void bridge?.openPath(path)}>
+            <SquareArrowOutUpRight />
+            用系统应用打开
+          </Button>
         </div>
       ) : (
         <textarea

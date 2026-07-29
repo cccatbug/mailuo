@@ -25,6 +25,10 @@ const api = {
     ipcRenderer.invoke("state:save", data),
   getDataDir: (): Promise<string> => ipcRenderer.invoke("state:dir"),
   openDataDir: (): Promise<string> => ipcRenderer.invoke("state:open-dir"),
+  openExternal: (url: string): Promise<void> =>
+    ipcRenderer.invoke("shell:open-external", url),
+  openPath: (p: string): Promise<string> =>
+    ipcRenderer.invoke("shell:open-path", p),
 
   listModels: (): Promise<EnabledModelSummary[]> =>
     ipcRenderer.invoke("agent:models"),
@@ -106,6 +110,8 @@ const api = {
     ipcRenderer.invoke("mailuo:read-file", p),
   readImageDataUrl: (p: string, mimeType: string): Promise<string> =>
     ipcRenderer.invoke("mailuo:read-image-data-url", p, mimeType),
+  readDataUrl: (p: string, mimeType: string): Promise<string> =>
+    ipcRenderer.invoke("mailuo:read-data-url", p, mimeType),
   writeFile: (p: string, content: string): Promise<void> =>
     ipcRenderer.invoke("mailuo:write-file", p, content),
   memoryPath: (): Promise<string> => ipcRenderer.invoke("mailuo:memory-path"),

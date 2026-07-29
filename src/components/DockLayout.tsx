@@ -49,6 +49,7 @@ import {
   useChat,
 } from "@/features/ai/AssistantPanel";
 import { FileEditor } from "@/features/files/FileEditor";
+import { BrowserPanel } from "@/features/files/BrowserPanel";
 import { useAppStore, type ViewMode } from "@/store/useAppStore";
 
 const LAYOUT_KEY = "mailuo-dock-v1";
@@ -70,6 +71,13 @@ const components: Record<string, React.FunctionComponent<IDockviewPanelProps>> =
         typeof props.params?.mimeType === "string"
           ? props.params.mimeType
           : undefined
+      }
+    />
+  ),
+  browser: (props) => (
+    <BrowserPanel
+      initialUrl={
+        typeof props.params?.url === "string" ? props.params.url : undefined
       }
     />
   ),
@@ -124,6 +132,24 @@ export function openFilePanel(
     minimumWidth: 300,
     params: { path: filePath, mimeType },
     position: { referencePanel: api.getPanel("tasks") ? "tasks" : undefined as never, direction: "within" },
+  });
+}
+
+/** 打开基于 Electron Chromium webview 的原生网页标签。 */
+export function openBrowserPanel(url = "https://www.google.com") {
+  const api = dockRef.api;
+  if (!api) return;
+  const id = `browser:${crypto.randomUUID()}`;
+  api.addPanel({
+    id,
+    component: "browser",
+    title: "浏览器",
+    minimumWidth: 420,
+    params: { url },
+    position: {
+      referencePanel: api.getPanel("tasks") ? "tasks" : undefined as never,
+      direction: "within",
+    },
   });
 }
 
