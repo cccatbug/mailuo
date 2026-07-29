@@ -58,8 +58,18 @@ jobs:
         run: |
           set -euo pipefail
 
+          gh api \
+            --method POST \
+            "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$RELEASE_TAG" \
+            -f target_commitish="$RELEASE_TAG" \
+            --jq '.body' > release-notes.md
+
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" release-assets/* --clobber
+            gh release edit "$RELEASE_TAG" \
+              --title "脉络 $RELEASE_TAG" \
+              --notes-file release-notes.md
             exit 0
           fi
 
@@ -71,5 +81,5 @@ jobs:
           gh release create "$RELEASE_TAG" release-assets/* \
             --verify-tag \
             --title "脉络 $RELEASE_TAG" \
-            --generate-notes \
+            --notes-file release-notes.md \
             "${RELEASE_FLAGS[@]}"

@@ -235,8 +235,20 @@ jobs:
         run: |
           set -euo pipefail
 
+          # 始终重新生成发布说明。此前已有 Release 的分支只覆盖安装包，
+          # 会导致 Release 页面长期没有本次版本的更新日志。
+          gh api \
+            --method POST \
+            "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$RELEASE_TAG" \
+            -f target_commitish="$RELEASE_TAG" \
+            --jq '.body' > release-notes.md
+
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" release-assets/* --clobber
+            gh release edit "$RELEASE_TAG" \
+              --title "脉络 $RELEASE_TAG" \
+              --notes-file release-notes.md
             exit 0
           fi
 
@@ -248,5 +260,5 @@ jobs:
           gh release create "$RELEASE_TAG" release-assets/* \
             --verify-tag \
             --title "脉络 $RELEASE_TAG" \
-            --generate-notes \
+            --notes-file release-notes.md \
             "${RELEASE_FLAGS[@]}"
