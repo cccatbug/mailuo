@@ -103,6 +103,7 @@ export interface MailuoApi {
   emptyAssetTrash: (projectId: string) => Promise<void>;
   importAssets: (projectId: string) => Promise<AssetRecord[]>;
   revealAsset: (projectId: string, assetId: string) => Promise<void>;
+  clearBrowserData: () => Promise<void>;
   onAssistantEvent: (
     handler: (requestId: string, event: AssistantEventPayload) => void
   ) => () => void;

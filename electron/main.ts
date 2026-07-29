@@ -1,4 +1,13 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  session,
+  shell,
+  type MessageBoxOptions,
+  type WebContents,
+} from "electron";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -48,6 +57,7 @@ import {
 } from "./asset-store";
 
 const isMac = process.platform === "darwin";
+const BROWSER_PARTITION = "persist:mailuo-browser";
 
 /* ---------- 数据持久化（原子写入 + 旧 Tauri 数据迁移） ---------- */
 
@@ -124,6 +134,78 @@ function createWindow() {
   }
 }
 
+function externalProtocol(url: string): boolean {
+  try {
+    const protocol = new URL(url).protocol;
+    return !["http:", "https:", "about:", "data:", "blob:"].includes(protocol);
+  } catch {
+    return false;
+  }
+}
+
+/** 配置内置浏览器及其 OAuth 子窗口；共享持久 Session，保留 Cookie/缓存/认证态。 */
+function configureBrowserContents(contents: WebContents) {
+  contents.setWindowOpenHandler(({ url }) => {
+    if (externalProtocol(url)) {
+      void shell.openExternal(url);
+      return { action: "deny" };
+    }
+    return {
+      action: "allow",
+      overrideBrowserWindowOptions: {
+        width: 920,
+        height: 720,
+        minWidth: 480,
+        minHeight: 420,
+        autoHideMenuBar: true,
+        backgroundColor: "#ffffff",
+        webPreferences: {
+          partition: BROWSER_PARTITION,
+          sandbox: true,
+          contextIsolation: true,
+          nodeIntegration: false,
+        },
+      },
+    };
+  });
+  contents.on("will-navigate", (event, url) => {
+    if (!externalProtocol(url)) return;
+    event.preventDefault();
+    void shell.openExternal(url);
+  });
+  contents.on("did-create-window", (child) => configureBrowserContents(child.webContents));
+}
+
+function configureBrowserSession() {
+  const browserSession = session.fromPartition(BROWSER_PARTITION);
+  browserSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    const allowed = new Set(["clipboard-sanitized-write", "fullscreen", "pointerLock"]);
+    if (allowed.has(permission)) return callback(true);
+    if (!["media", "geolocation", "notifications"].includes(permission)) {
+      return callback(false);
+    }
+    const origin = (() => {
+      try { return new URL(details.requestingUrl).origin; } catch { return details.requestingUrl; }
+    })();
+    const permissionDialog = {
+        type: "question",
+        buttons: ["允许", "拒绝"],
+        defaultId: 1,
+        cancelId: 1,
+        title: "网页权限请求",
+        message: `${origin} 请求${permission === "media" ? "使用摄像头或麦克风" : permission === "geolocation" ? "获取位置" : "发送通知"}`,
+        detail: "仅在你信任该网站时允许。",
+      } satisfies MessageBoxOptions;
+    const parent = BrowserWindow.fromWebContents(webContents) ?? win;
+    const request = parent
+      ? dialog.showMessageBox(parent, permissionDialog)
+      : dialog.showMessageBox(permissionDialog);
+    void request
+      .then(({ response }) => callback(response === 0))
+      .catch(() => callback(false));
+  });
+}
+
 /* ---------- IPC ---------- */
 
 async function resolveProviderDraft(
@@ -186,6 +268,14 @@ function registerIpc() {
   ipcMain.handle("assets:reveal", async (_e, projectId: string, assetId: string) => {
     const { absolutePath } = await resolveAsset(projectId, assetId);
     shell.showItemInFolder(absolutePath);
+  });
+  ipcMain.handle("browser:clear-data", async () => {
+    const browserSession = session.fromPartition(BROWSER_PARTITION);
+    await Promise.all([
+      browserSession.clearCache(),
+      browserSession.clearStorageData(),
+      browserSession.clearAuthCache(),
+    ]);
   });
 
   ipcMain.handle("agent:models", () => listModels());
@@ -382,11 +472,7 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on("web-contents-created", (_event, contents) => {
-    // 内嵌浏览器的新窗口统一交给系统浏览器，避免不受 Dock 管理的游离窗口。
-    contents.setWindowOpenHandler(({ url }) => {
-      if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
-      return { action: "deny" };
-    });
+    if (contents.getType() === "webview") configureBrowserContents(contents);
   });
   app.on("second-instance", () => {
     if (win) {
@@ -397,6 +483,7 @@ if (!app.requestSingleInstanceLock()) {
 
   void app.whenReady().then(async () => {
     registerIpc();
+    configureBrowserSession();
     createWindow();
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();

@@ -139,6 +139,8 @@ const api = {
     ipcRenderer.invoke("assets:import", projectId),
   revealAsset: (projectId: string, assetId: string): Promise<void> =>
     ipcRenderer.invoke("assets:reveal", projectId, assetId),
+  clearBrowserData: (): Promise<void> =>
+    ipcRenderer.invoke("browser:clear-data"),
 
   onAssistantEvent: (
     handler: (requestId: string, event: AssistantEventPayload) => void

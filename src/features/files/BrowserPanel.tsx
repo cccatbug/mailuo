@@ -6,6 +6,7 @@ import {
   ExternalLink,
   Globe2,
   LoaderCircle,
+  MoreVertical,
   RefreshCw,
   Search,
   Sparkles,
@@ -17,6 +18,13 @@ import { Input } from "@/components/ui/input";
 import { Md } from "@/features/ai/Markdown";
 import { assistantSend } from "@/lib/ai";
 import { bridge } from "@/lib/bridge";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface MailuoWebview extends HTMLElement {
   src: string;
@@ -29,6 +37,9 @@ interface MailuoWebview extends HTMLElement {
   reload(): void;
   loadURL(url: string): Promise<void>;
   executeJavaScript<T>(code: string, userGesture?: boolean): Promise<T>;
+  openDevTools(): void;
+  closeDevTools(): void;
+  isDevToolsOpened(): boolean;
 }
 
 function normalizeAddress(value: string): string {
@@ -63,6 +74,7 @@ export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
   const [asking, setAsking] = useState(false);
   const [answer, setAnswer] = useState("");
   const [question, setQuestion] = useState("");
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     const view = webviewRef.current;
@@ -75,20 +87,36 @@ export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
       setCanBack(view.canGoBack?.() ?? false);
       setCanForward(view.canGoForward?.() ?? false);
     };
-    const start = () => setLoading(true);
+    const start = () => {
+      setLoading(true);
+      setLoadError(null);
+    };
     const stop = (event: Event) => {
       setLoading(false);
       sync(event);
+    };
+    const failed = (event: Event) => {
+      const failure = event as Event & {
+        errorCode?: number;
+        errorDescription?: string;
+        validatedURL?: string;
+        isMainFrame?: boolean;
+      };
+      if (failure.isMainFrame === false || failure.errorCode === -3) return;
+      setLoading(false);
+      setLoadError(failure.errorDescription || "页面加载失败");
     };
     view.addEventListener("did-start-loading", start);
     view.addEventListener("did-stop-loading", stop);
     view.addEventListener("did-navigate", sync);
     view.addEventListener("did-navigate-in-page", sync);
+    view.addEventListener("did-fail-load", failed);
     return () => {
       view.removeEventListener("did-start-loading", start);
       view.removeEventListener("did-stop-loading", stop);
       view.removeEventListener("did-navigate", sync);
       view.removeEventListener("did-navigate-in-page", sync);
+      view.removeEventListener("did-fail-load", failed);
     };
   }, [url]);
 
@@ -164,6 +192,37 @@ export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
         <Button variant="ghost" size="icon-sm" title="在系统浏览器打开" onClick={() => bridge?.openExternal(url)}>
           <ExternalLink />
         </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon-sm" title="浏览器工具"><MoreVertical /></Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => webviewRef.current?.openDevTools()}>
+              打开开发者工具
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => {
+              const view = webviewRef.current;
+              if (!view) return;
+              if (view.isDevToolsOpened()) view.closeDevTools();
+              else view.openDevTools();
+            }}>
+              切换网页控制台
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              variant="destructive"
+              onClick={() => {
+                if (!window.confirm("清除内置浏览器的 Cookie、缓存、登录态和认证信息？")) return;
+                void bridge?.clearBrowserData().then(() => {
+                  toast.success("浏览器会话数据已清除");
+                  webviewRef.current?.reload();
+                });
+              }}
+            >
+              清除 Cookie 与缓存…
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <Button
           variant={assistantOpen ? "secondary" : "ghost"}
           size="sm"
@@ -183,6 +242,11 @@ export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
         allowpopups: "true",
         className: "min-h-0 flex-1 bg-white",
       })}
+      {loadError && (
+        <div className="pointer-events-none absolute inset-x-3 top-13 z-10 rounded-lg border border-destructive/30 bg-background/95 px-3 py-2 text-xs text-destructive shadow-sm">
+          {loadError}。如果这是扫码登录回跳，请确认对应客户端已安装；HTTP(S) 登录弹窗会保留在脉络浏览会话中。
+        </div>
+      )}
       {assistantOpen && (
         <aside className="absolute top-11 right-2 bottom-2 z-20 flex w-[min(380px,calc(100%-16px))] flex-col overflow-hidden rounded-xl border bg-background/96 shadow-2xl backdrop-blur">
           <div className="flex h-10 shrink-0 items-center gap-2 border-b px-3">
