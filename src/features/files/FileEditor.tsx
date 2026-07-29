@@ -15,6 +15,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { bridge } from "@/lib/bridge";
 import { Md } from "@/features/ai/Markdown";
 import { cn } from "@/lib/utils";
+import { ImageViewer } from "./ImageViewer";
 
 /** ~/.mailuo 内文件的查看/编辑器（小枢产出物、附件、记忆文件等） */
 export function FileEditor({
@@ -34,7 +35,20 @@ export function FileEditor({
       mimeType === "text/html"
   );
   const extension = path.split(".").pop()?.toLowerCase() ?? "";
-  const normalizedMime = mimeType?.toLowerCase().split(";")[0] ?? "";
+  const normalizedMime =
+    mimeType?.toLowerCase().split(";")[0] ||
+    ({
+      svg: "image/svg+xml",
+      png: "image/png",
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      gif: "image/gif",
+      webp: "image/webp",
+      pdf: "application/pdf",
+      html: "text/html",
+      htm: "text/html",
+      md: "text/markdown",
+    }[extension] ?? "");
   const isMd = extension === "md" || normalizedMime === "text/markdown";
   const isHtml =
     extension === "html" ||
@@ -57,10 +71,10 @@ export function FileEditor({
     setContent(null);
     setImageUrl(null);
     const request =
-      isImage && mimeType
-        ? bridge?.readImageDataUrl(path, mimeType)
-        : isMedia && mimeType
-          ? bridge?.readDataUrl(path, mimeType)
+      isImage
+        ? bridge?.readImageDataUrl(path, normalizedMime)
+        : isMedia
+          ? bridge?.readDataUrl(path, normalizedMime)
         : bridge?.readFile(path);
     request
       ?.then((value) => {
@@ -106,7 +120,7 @@ export function FileEditor({
     <div className="flex h-full min-w-0 flex-col overflow-hidden bg-background">
       <div className="flex h-9 shrink-0 items-center gap-1 border-b px-3">
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
-          {path.replace(/^.*\/\.mailuo\//, "~/.mailuo/")}
+          {path.replace(/^.*[/\\]workspace[/\\][^/\\]+[/\\]?/, "").replace(/\\/g, "/")}
           {dirty && (
             <span
               className="ml-1 inline-block size-1.5 rounded-full bg-primary align-middle"
@@ -152,13 +166,7 @@ export function FileEditor({
       </div>
       {isImage ? (
         imageUrl ? (
-          <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-muted/20 p-5">
-            <img
-              src={imageUrl}
-              alt={path.split("/").pop() ?? "附件图片"}
-              className="max-h-full max-w-full rounded-lg object-contain shadow-sm"
-            />
-          </div>
+          <ImageViewer src={imageUrl} alt={path.split("/").pop() ?? "附件图片"} />
         ) : (
           <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
             <ImageIcon className="size-8" />

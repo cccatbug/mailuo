@@ -74,18 +74,9 @@ import { dependentsOf, isBlocked } from "@/lib/deps";
 import { TaskFlow } from "@/features/graph/TaskFlow";
 import { StatsPanel } from "@/features/stats/StatsPanel";
 import { MatrixPanel } from "@/features/matrix/MatrixPanel";
-import { aiPolishNotes } from "@/features/ai/actions";
 
 export function polishNotesWithToast(taskId: string) {
-  const { updateTask } = useAppStore.getState();
-  toast.promise(
-    aiPolishNotes(taskId).then((notes) => updateTask(taskId, { notes })),
-    {
-      loading: "AI 正在撰写备注…",
-      success: "备注已更新",
-      error: (e) => `润色失败：${String(e)}`,
-    }
-  );
+  useAppStore.getState().setAiDialog({ type: "polish", taskId });
 }
 
 function fmtDue(due: string): { text: string; overdue: boolean } {

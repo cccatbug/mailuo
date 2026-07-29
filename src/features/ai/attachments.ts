@@ -38,6 +38,7 @@ const TEXT_EXTENSIONS = new Set([
   "rs",
   "sh",
   "sql",
+  "svg",
   "toml",
   "ts",
   "tsx",

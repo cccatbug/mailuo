@@ -43,6 +43,8 @@ import {
 import { Md } from "./Markdown";
 import type { AiModelRef } from "@/shared/ai-config";
 import type { RouteResolutionStatus } from "@/shared/ai-config";
+import type { AssetRecord, AssetReference } from "@/shared/assets";
+import { openAsset } from "@/features/files/AssetPanel";
 
 /* ---------- 消息模型：分段时间线（文本 / 思考 / 工具） ---------- */
 
@@ -70,6 +72,7 @@ export interface Message {
   uiSpecs?: UiSpec[];
   files?: string[];
   attachments?: AssistantAttachmentMeta[];
+  assets?: AssetReference[];
 }
 
 export interface Conversation {
@@ -209,7 +212,7 @@ function conversationExcerpt(conv: Conversation): string {
       const attachmentRefs = (message.attachments ?? [])
         .map((attachment) =>
           attachment.path
-            ? `${attachment.name}（${attachment.path}）`
+            ? `${attachment.name}（${attachment.path.replace(/^.*[/\\\\]workspace[/\\\\][^/\\\\]+[/\\\\]?/, "")}）`
             : attachment.name
         )
         .join("、");
@@ -233,7 +236,7 @@ function conversationExcerpt(conv: Conversation): string {
     .slice(-20)
     .map(
       (attachment) =>
-        `- ${attachment.name}（${attachment.mimeType}）：${attachment.path}`
+        `- ${attachment.name}（${attachment.mimeType}）：${attachment.path.replace(/^.*[/\\\\]workspace[/\\\\][^/\\\\]+[/\\\\]?/, "")}`
     )
     .join("\n");
   return `${recentMessages}${
@@ -246,6 +249,8 @@ async function sendMessage(
   mentionedIds: string[],
   skillNames: string[],
   attachments: ComposerAttachment[]
+  ,
+  assetRefs: AssetRecord[]
 ): Promise<boolean> {
   const store = useAppStore.getState();
   const projectId = store.selectedProjectId;
@@ -276,6 +281,29 @@ async function sendMessage(
       ? `\n\n【此前对话摘录（会话已重启，供衔接）】\n${conversationExcerpt(conv)}`
       : "";
   const attachmentPayloads = attachments.map(attachmentPayload);
+  const resolvedAssets = await Promise.all(
+    assetRefs.map(async (asset) => {
+      const resolved = await bridge?.resolveAsset(projectId, asset.id);
+      return resolved
+        ? {
+            ref: {
+              assetId: asset.id,
+              name: asset.name,
+              relativePath: asset.relativePath,
+              mimeType: asset.mimeType,
+              size: asset.size,
+            } satisfies AssetReference,
+            absolutePath: resolved.absolutePath,
+          }
+        : null;
+    })
+  );
+  const validAssets = resolvedAssets.filter((item): item is NonNullable<typeof item> => Boolean(item));
+  const assetContext = validAssets.length
+    ? `\n\n【用户 # 引用的项目资产】\n${validAssets
+        .map((item) => `- ${item.ref.name}（${item.ref.mimeType}）：${item.absolutePath}`)
+        .join("\n")}\n请按需使用 read/bash 读取这些文件。`
+    : "";
 
   updateCurrent((c) => ({
     ...c,
@@ -292,6 +320,7 @@ async function sendMessage(
         role: "user",
         content: text,
         attachments: attachments.map(attachmentMeta),
+        assets: validAssets.map((item) => item.ref),
       },
       { role: "assistant", content: "", parts: [], streaming: true },
     ],
@@ -301,7 +330,7 @@ async function sendMessage(
   void completeAssistantTurn({
     agentText,
     attachmentPayloads,
-    mentionContext,
+    mentionContext: `${mentionContext}${assetContext}`,
     projectId,
     skillNames,
     staleContext,
@@ -750,6 +779,30 @@ export function AssistantPanel() {
                         ))}
                       </div>
                     )}
+                    {m.assets && m.assets.length > 0 && selectedProjectId && (
+                      <div className="flex flex-wrap justify-end gap-1">
+                        {m.assets.map((asset) => (
+                          <button
+                            key={asset.assetId}
+                            className="rounded-lg border border-primary/20 bg-primary/8 px-2 py-1.5 text-xs"
+                            onClick={() => void openAsset(selectedProjectId, {
+                              id: asset.assetId,
+                              projectId: selectedProjectId,
+                              name: asset.name,
+                              relativePath: asset.relativePath,
+                              mimeType: asset.mimeType,
+                              size: asset.size,
+                              createdAt: 0,
+                              modifiedAt: 0,
+                              source: "ai",
+                              tags: [],
+                              favorite: false,
+                              trashed: false,
+                            })}
+                          >#{asset.name}</button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="flex w-[94%] flex-col gap-1.5">
@@ -880,8 +933,8 @@ export function AssistantPanel() {
           persistChats();
           void assistantReset();
         }}
-        onSend={(text, ids, skills, attachments) =>
-          sendMessage(text, ids, skills, attachments)
+        onSend={(text, ids, skills, attachments, assetRefs) =>
+          sendMessage(text, ids, skills, attachments, assetRefs)
         }
       />
     </div>

@@ -82,13 +82,13 @@ export async function aiPlanProject(
 }
 
 /** AI 拆解任务：把一个任务分解为若干前置子任务 */
-export async function aiBreakdownTask(taskId: string): Promise<DraftTask[]> {
+export async function aiBreakdownTask(taskId: string, instruction = "请拆解上下文中的目标任务。"): Promise<DraftTask[]> {
   const { tasks } = useAppStore.getState();
   const task = tasks.find((t) => t.id === taskId);
   if (!task) throw new Error("任务不存在");
   const raw = await runAgentJson<{ tasks?: DraftTask[] }>({
     useCase: "task-breakdown",
-    prompt: "请拆解上下文中的目标任务。",
+    prompt: instruction,
     context: {
       projectSnapshot: projectContext(task.projectId),
       taskDetails: `任务：「${task.title}」${
@@ -148,7 +148,8 @@ export interface DepSuggestion {
 }
 
 export async function aiSuggestDeps(
-  projectId: string
+  projectId: string,
+  instruction = "请分析项目任务的缺失依赖。"
 ): Promise<DepSuggestion[]> {
   const { tasks } = useAppStore.getState();
   const list = tasks.filter((t) => t.projectId === projectId);
@@ -156,7 +157,7 @@ export async function aiSuggestDeps(
     suggestions?: { from?: string; to?: string; reason?: string }[];
   }>({
     useCase: "dependency-suggest",
-    prompt: "请分析项目任务的缺失依赖。",
+    prompt: instruction,
     context: { projectSnapshot: projectContext(projectId) },
   });
   const parse = (s: string | undefined) => {
@@ -183,13 +184,13 @@ export async function aiSuggestDeps(
 
 /* ---------- 备注润色 ---------- */
 
-export async function aiPolishNotes(taskId: string): Promise<string> {
+export async function aiPolishNotes(taskId: string, instruction = "请润色上下文中的任务备注。"): Promise<string> {
   const { tasks } = useAppStore.getState();
   const task = tasks.find((t) => t.id === taskId);
   if (!task) throw new Error("任务不存在");
   const text = await runAgent({
     useCase: "notes-polish",
-    prompt: "请润色上下文中的任务备注。",
+    prompt: instruction,
     context: {
       taskDetails: `任务：「${task.title}」\n现有备注：${task.notes || "（空）"}`,
     },

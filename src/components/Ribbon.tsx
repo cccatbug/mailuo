@@ -1,10 +1,10 @@
-import { FolderKanban, Globe2, MoonStar, Search, Settings, SunMedium } from "lucide-react";
+import { FolderKanban, FolderOpen, Globe2, MoonStar, Search, Settings, SunMedium } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ShuLogo } from "@/components/ShuLogo";
 import { useAppStore } from "@/store/useAppStore";
 import { MOD_KEY, modLabel } from "@/lib/platform";
-import { openBrowserPanel } from "@/components/DockLayout";
+import { openAssetPanel, openBrowserPanel } from "@/components/DockLayout";
 
 function RibbonButton({
   label,
@@ -72,6 +72,9 @@ export function Ribbon() {
       </RibbonButton>
       <RibbonButton label="浏览器 · 小枢网页助手" onClick={() => openBrowserPanel()}>
         <Globe2 />
+      </RibbonButton>
+      <RibbonButton label="项目资产" onClick={() => openAssetPanel()}>
+        <FolderOpen />
       </RibbonButton>
 
       <div className="flex-1" />

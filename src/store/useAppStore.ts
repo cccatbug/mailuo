@@ -42,7 +42,8 @@ function applyAppearance(s: AppSettings) {
 export type AiDialog =
   | { type: "plan"; projectId: string }
   | { type: "breakdown"; taskId: string }
-  | { type: "suggestDeps"; projectId: string };
+  | { type: "suggestDeps"; projectId: string }
+  | { type: "polish"; taskId: string };
 
 /** 删除任务后的快照，用于「撤销」 */
 export interface RemovedTask {

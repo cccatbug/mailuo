@@ -25,7 +25,7 @@ import {
 import { useAppStore } from "@/store/useAppStore";
 import { cn } from "@/lib/utils";
 import { MOD_KEY } from "@/lib/platform";
-import { openBrowserPanel } from "@/components/DockLayout";
+import { focusOrOpenBrowser, openAssetPanel, openBrowserPanel } from "@/components/DockLayout";
 
 export function CommandPalette() {
   const open = useAppStore((s) => s.commandOpen);
@@ -149,9 +149,18 @@ export function CommandPalette() {
         </CommandGroup>
         <CommandSeparator />
         <CommandGroup heading="操作">
+          <CommandItem onSelect={() => run(() => focusOrOpenBrowser())}>
+            <Globe2 />
+            打开 / 聚焦浏览器
+            <CommandShortcut>{MOD_KEY}⇧G</CommandShortcut>
+          </CommandItem>
           <CommandItem onSelect={() => run(() => openBrowserPanel())}>
             <Globe2 />
-            打开浏览器与小枢网页助手
+            新建浏览器标签
+          </CommandItem>
+          <CommandItem onSelect={() => run(() => openAssetPanel())}>
+            <Folder />
+            打开项目资产
           </CommandItem>
           <CommandItem onSelect={() => run(() => setSettingsOpen(true))}>
             <Settings />

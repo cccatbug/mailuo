@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -37,6 +37,15 @@ import {
   testProviderConnection,
 } from "./model-discovery";
 import type { OneShotUseCase } from "../src/shared/ai-prompts";
+import {
+  emptyAssetTrash,
+  importAssets,
+  listProjectAssets,
+  resolveAsset,
+  restoreAsset,
+  trashAsset,
+  updateAsset,
+} from "./asset-store";
 
 const isMac = process.platform === "darwin";
 
@@ -145,6 +154,39 @@ function registerIpc() {
   ipcMain.handle("shell:open-path", (_e, p: string) =>
     shell.openPath(resolveMailuoPath(p))
   );
+  ipcMain.handle("assets:list", (_e, projectId: string) =>
+    listProjectAssets(projectId)
+  );
+  ipcMain.handle("assets:resolve", async (_e, projectId: string, assetId: string) => {
+    const { asset, absolutePath } = await resolveAsset(projectId, assetId);
+    return { asset, absolutePath };
+  });
+  ipcMain.handle(
+    "assets:update",
+    (_e, projectId: string, assetId: string, patch: { name?: string; tags?: string[]; favorite?: boolean }) =>
+      updateAsset(projectId, assetId, patch)
+  );
+  ipcMain.handle("assets:trash", (_e, projectId: string, assetId: string) =>
+    trashAsset(projectId, assetId)
+  );
+  ipcMain.handle("assets:restore", (_e, projectId: string, assetId: string) =>
+    restoreAsset(projectId, assetId)
+  );
+  ipcMain.handle("assets:empty-trash", (_e, projectId: string) =>
+    emptyAssetTrash(projectId)
+  );
+  ipcMain.handle("assets:import", async (_e, projectId: string) => {
+    const result = await dialog.showOpenDialog({
+      properties: ["openFile", "multiSelections"],
+      title: "导入项目资产",
+    });
+    if (!result.canceled) await importAssets(projectId, result.filePaths);
+    return listProjectAssets(projectId);
+  });
+  ipcMain.handle("assets:reveal", async (_e, projectId: string, assetId: string) => {
+    const { absolutePath } = await resolveAsset(projectId, assetId);
+    shell.showItemInFolder(absolutePath);
+  });
 
   ipcMain.handle("agent:models", () => listModels());
   ipcMain.handle("agent:skills", () => listSkills());

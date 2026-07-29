@@ -50,6 +50,7 @@ import {
 } from "@/features/ai/AssistantPanel";
 import { FileEditor } from "@/features/files/FileEditor";
 import { BrowserPanel } from "@/features/files/BrowserPanel";
+import { AssetPanel } from "@/features/files/AssetPanel";
 import { useAppStore, type ViewMode } from "@/store/useAppStore";
 
 const LAYOUT_KEY = "mailuo-dock-v1";
@@ -81,6 +82,7 @@ const components: Record<string, React.FunctionComponent<IDockviewPanelProps>> =
       }
     />
   ),
+  assets: () => <AssetPanel />,
 };
 
 const VIEW_PANEL_TITLE: Record<ViewMode, string> = {
@@ -151,6 +153,28 @@ export function openBrowserPanel(url = "https://www.google.com") {
       direction: "within",
     },
   });
+}
+
+export function openAssetPanel() {
+  const api = dockRef.api;
+  if (!api) return;
+  const existing = api.getPanel("assets");
+  if (existing) return existing.api.setActive();
+  api.addPanel({
+    id: "assets",
+    component: "assets",
+    title: "项目资产",
+    minimumWidth: 420,
+    position: { referencePanel: api.getPanel("tasks") ? "tasks" : undefined as never, direction: "within" },
+  });
+}
+
+export function focusOrOpenBrowser() {
+  const api = dockRef.api;
+  if (!api) return;
+  const browser = api.panels.find((panel) => panel.id.startsWith("browser:"));
+  if (browser) browser.api.setActive();
+  else openBrowserPanel();
 }
 
 /** 把某个视图作为独立标签页打开（已存在则聚焦） */

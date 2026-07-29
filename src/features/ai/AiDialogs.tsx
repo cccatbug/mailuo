@@ -22,10 +22,32 @@ import {
   aiBreakdownTask,
   aiPlanProject,
   aiSuggestDeps,
+  aiPolishNotes,
   applyDrafts,
   type DepSuggestion,
   type DraftTask,
 } from "./actions";
+import { defaultPrompt, loadPromptTemplates, type PromptKind } from "./promptTemplates";
+
+function PromptChoices({
+  kind,
+  onSelect,
+}: {
+  kind: PromptKind;
+  onSelect: (prompt: string) => void;
+}) {
+  const templates = loadPromptTemplates().filter((item) => item.kind === kind);
+  if (templates.length < 2) return null;
+  return (
+    <div className="flex flex-wrap gap-1">
+      {templates.map((template) => (
+        <Button key={template.id} type="button" variant="outline" size="sm" className="h-6 text-[11px]" onClick={() => onSelect(template.prompt)}>
+          {template.name}
+        </Button>
+      ))}
+    </div>
+  );
+}
 
 function DraftList({
   drafts,
@@ -105,6 +127,7 @@ function PlanProjectDialog({
   const projects = useAppStore((s) => s.projects);
   const project = projects.find((p) => p.id === projectId);
   const [goal, setGoal] = useState("");
+  const [instruction, setInstruction] = useState(() => defaultPrompt("project-plan"));
   const [loading, setLoading] = useState(false);
   const [drafts, setDrafts] = useState<DraftTask[] | null>(null);
   const { checked, toggle } = useDraftSelection(drafts);
@@ -113,7 +136,7 @@ function PlanProjectDialog({
     if (!goal.trim()) return;
     setLoading(true);
     try {
-      setDrafts(await aiPlanProject(projectId, goal));
+      setDrafts(await aiPlanProject(projectId, `${goal}\n\n规划偏好：${instruction}`));
     } catch (e) {
       toast.error("AI 规划失败", { description: String(e) });
     } finally {
@@ -142,13 +165,22 @@ function PlanProjectDialog({
         </DialogHeader>
 
         {!drafts ? (
-          <Textarea
-            autoFocus
-            value={goal}
-            placeholder="例如：三周内完成产品官网改版并上线"
-            className="min-h-24"
-            onChange={(e) => setGoal(e.target.value)}
-          />
+          <div className="space-y-2">
+            <PromptChoices kind="project-plan" onSelect={setInstruction} />
+            <Textarea
+              autoFocus
+              value={goal}
+              placeholder="例如：三周内完成产品官网改版并上线"
+              className="min-h-20"
+              onChange={(e) => setGoal(e.target.value)}
+            />
+            <Textarea
+              value={instruction}
+              placeholder="描述规划偏好…"
+              className="min-h-16 text-xs"
+              onChange={(e) => setInstruction(e.target.value)}
+            />
+          </div>
         ) : (
           <DraftList drafts={drafts} checked={checked} onToggle={toggle} />
         )}
@@ -184,17 +216,17 @@ function BreakdownDialog({
   const task = tasks.find((t) => t.id === taskId);
   const [drafts, setDrafts] = useState<DraftTask[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [instruction, setInstruction] = useState(() => defaultPrompt("task-breakdown"));
+  const [loading, setLoading] = useState(false);
   const { checked, toggle } = useDraftSelection(drafts);
 
-  useEffect(() => {
-    let cancelled = false;
-    aiBreakdownTask(taskId)
-      .then((d) => !cancelled && setDrafts(d))
-      .catch((e) => !cancelled && setError(String(e)));
-    return () => {
-      cancelled = true;
-    };
-  }, [taskId]);
+  const generate = async () => {
+    setLoading(true);
+    setError(null);
+    try { setDrafts(await aiBreakdownTask(taskId, instruction)); }
+    catch (cause) { setError(String(cause)); }
+    finally { setLoading(false); }
+  };
 
   const apply = () => {
     if (!drafts || !task) return;
@@ -218,10 +250,12 @@ function BreakdownDialog({
 
         {error ? (
           <p className="text-sm text-destructive">{error}</p>
-        ) : !drafts ? (
+        ) : loading ? (
           <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
             <Spinner /> 正在拆解…
           </div>
+        ) : !drafts ? (
+          <div className="space-y-2"><PromptChoices kind="task-breakdown" onSelect={setInstruction} /><Textarea autoFocus value={instruction} className="min-h-24" placeholder="描述希望如何拆解…" onChange={(event) => setInstruction(event.target.value)} /></div>
         ) : (
           <DraftList drafts={drafts} checked={checked} onToggle={toggle} />
         )}
@@ -230,9 +264,11 @@ function BreakdownDialog({
           <Button variant="outline" onClick={onClose}>
             取消
           </Button>
-          <Button onClick={apply} disabled={!drafts || checked.size === 0}>
-            写入 {checked.size} 个子任务
-          </Button>
+          {!drafts ? (
+            <Button onClick={() => void generate()} disabled={loading || !instruction.trim()}>生成拆解</Button>
+          ) : (
+            <Button onClick={apply} disabled={checked.size === 0}>写入 {checked.size} 个子任务</Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -252,20 +288,19 @@ function SuggestDepsDialog({
   const [suggestions, setSuggestions] = useState<DepSuggestion[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [checked, setChecked] = useState<Set<number>>(new Set());
+  const [instruction, setInstruction] = useState(() => defaultPrompt("dependency-suggest"));
+  const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    aiSuggestDeps(projectId)
-      .then((s) => {
-        if (cancelled) return;
-        setSuggestions(s);
-        setChecked(new Set(s.map((_, i) => i)));
-      })
-      .catch((e) => !cancelled && setError(String(e)));
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId]);
+  const generate = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await aiSuggestDeps(projectId, instruction);
+      setSuggestions(result);
+      setChecked(new Set(result.map((_, index) => index)));
+    } catch (cause) { setError(String(cause)); }
+    finally { setLoading(false); }
+  };
 
   const apply = () => {
     if (!suggestions) return;
@@ -295,10 +330,12 @@ function SuggestDepsDialog({
 
         {error ? (
           <p className="text-sm text-destructive">{error}</p>
-        ) : !suggestions ? (
+        ) : loading ? (
           <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
             <Spinner /> 正在分析依赖…
           </div>
+        ) : !suggestions ? (
+          <div className="space-y-2"><PromptChoices kind="dependency-suggest" onSelect={setInstruction} /><Textarea autoFocus value={instruction} className="min-h-24" placeholder="描述依赖分析偏好…" onChange={(event) => setInstruction(event.target.value)} /></div>
         ) : suggestions.length === 0 ? (
           <p className="py-6 text-center text-sm text-muted-foreground">
             没有发现缺失的依赖，脉络已经很清晰了。
@@ -350,12 +387,52 @@ function SuggestDepsDialog({
           <Button variant="outline" onClick={onClose}>
             取消
           </Button>
-          <Button
-            onClick={apply}
-            disabled={!suggestions || suggestions.length === 0 || checked.size === 0}
-          >
-            建立 {checked.size} 条依赖
-          </Button>
+          {!suggestions ? (
+            <Button onClick={() => void generate()} disabled={loading || !instruction.trim()}>开始分析</Button>
+          ) : (
+            <Button onClick={apply} disabled={suggestions.length === 0 || checked.size === 0}>建立 {checked.size} 条依赖</Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function PolishDialog({ taskId, onClose }: { taskId: string; onClose: () => void }) {
+  const task = useAppStore((state) => state.tasks.find((entry) => entry.id === taskId));
+  const updateTask = useAppStore((state) => state.updateTask);
+  const [instruction, setInstruction] = useState(() => defaultPrompt("notes-polish"));
+  const [result, setResult] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const generate = async () => {
+    setLoading(true);
+    try { setResult(await aiPolishNotes(taskId, instruction)); }
+    catch (cause) { toast.error("润色失败", { description: String(cause) }); }
+    finally { setLoading(false); }
+  };
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Sparkles className="size-4 text-primary" />润色「{task?.title}」</DialogTitle>
+          <DialogDescription>先说明希望如何改写，生成后确认才会覆盖原备注。</DialogDescription>
+        </DialogHeader>
+        {!result ? (
+          <div className="space-y-2"><PromptChoices kind="notes-polish" onSelect={setInstruction} /><Textarea autoFocus value={instruction} className="min-h-24" onChange={(event) => setInstruction(event.target.value)} /></div>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div><p className="mb-1 text-xs text-muted-foreground">原备注</p><div className="min-h-28 rounded-lg border bg-muted/20 p-3 text-xs whitespace-pre-wrap">{task?.notes || "（空）"}</div></div>
+            <div><p className="mb-1 text-xs text-muted-foreground">生成结果</p><Textarea value={result} className="min-h-28" onChange={(event) => setResult(event.target.value)} /></div>
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>取消</Button>
+          {!result ? <Button disabled={loading || !instruction.trim()} onClick={() => void generate()}>{loading && <Spinner />}生成</Button> : (
+            <>
+              <Button variant="outline" onClick={() => setResult(null)}>调整提示词</Button>
+              <Button onClick={() => { updateTask(taskId, { notes: result }); toast.success("备注已更新"); onClose(); }}>应用结果</Button>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -377,5 +454,7 @@ export function AiDialogs() {
       return (
         <SuggestDepsDialog projectId={aiDialog.projectId} onClose={close} />
       );
+    case "polish":
+      return <PolishDialog taskId={aiDialog.taskId} onClose={close} />;
   }
 }

@@ -1,24 +1,39 @@
 import { memo } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { bridge } from "@/lib/bridge";
+import { openFilePanel } from "@/components/DockLayout";
+import { useAppStore } from "@/store/useAppStore";
 
 /** 紧凑型 markdown 渲染（聊天气泡内，流式期间可反复重渲染） */
 export const Md = memo(function Md({ text }: { text: string }) {
+  const projectId = useAppStore((state) => state.selectedProjectId);
   return (
     <div className="mailuo-md min-w-0 text-sm leading-relaxed">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        urlTransform={(url) =>
+          url.startsWith("mailuo-asset:") ? url : defaultUrlTransform(url)
+        }
         components={{
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              target="_blank"
-              rel="noreferrer"
-              className="text-primary underline underline-offset-2"
-            >
-              {children}
-            </a>
-          ),
+          a: ({ href, children }) => {
+            const assetId = href?.startsWith("mailuo-asset:") ? href.slice("mailuo-asset:".length) : null;
+            return assetId ? (
+              <button
+                className="text-primary underline underline-offset-2"
+                onClick={() => {
+                  if (!projectId) return;
+                  void bridge?.resolveAsset(projectId, assetId).then(({ asset, absolutePath }) =>
+                    openFilePanel(absolutePath, asset.mimeType, asset.name)
+                  );
+                }}
+              >{children}</button>
+            ) : (
+              <a href={href} target="_blank" rel="noreferrer" className="text-primary underline underline-offset-2">
+                {children}
+              </a>
+            );
+          },
           code: ({ className, children }) => {
             const inline = !className;
             return inline ? (

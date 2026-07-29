@@ -18,6 +18,7 @@ import {
   SlashSquare,
   Upload,
   X,
+  Hash,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -47,6 +48,7 @@ import {
   type ComposerAttachment,
 } from "./attachments";
 import { getSkills, type SkillInfo } from "./skills";
+import type { AssetRecord } from "@/shared/assets";
 
 /* ---------- 内置快捷指令（/） ---------- */
 
@@ -147,16 +149,19 @@ export function Composer({
     text: string,
     mentionedIds: string[],
     skillNames: string[],
-    attachments: ComposerAttachment[]
+    attachments: ComposerAttachment[],
+    assetRefs: AssetRecord[]
   ) => Promise<boolean>;
 }) {
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
 
   const [input, setInput] = useState("");
   const [mentions, setMentions] = useState<Task[]>([]);
-  const [menu, setMenu] = useState<"none" | "mention" | "slash" | "skill">("none");
+  const [menu, setMenu] = useState<"none" | "mention" | "slash" | "skill" | "asset">("none");
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [usedSkills, setUsedSkills] = useState<string[]>([]);
+  const [assets, setAssets] = useState<AssetRecord[]>([]);
+  const [referencedAssets, setReferencedAssets] = useState<AssetRecord[]>([]);
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
   const [models, setModels] = useState<EnabledModelSummary[] | null>(null);
@@ -214,6 +219,15 @@ export function Composer({
       void getSkills().then(setSkills);
       return;
     }
+    const hash = /(?:^|\s)#([^\s#]*)$/.exec(before);
+    if (hash) {
+      setMenu("asset");
+      setQuery(hash[1]);
+      setHighlight(0);
+      const projectId = useAppStore.getState().selectedProjectId;
+      if (projectId) void bridge?.listAssets(projectId).then(setAssets);
+      return;
+    }
     setMenu("none");
   };
 
@@ -226,6 +240,10 @@ export function Composer({
   );
   const skillCandidates = skills
     .filter((s) => s.name.toLowerCase().includes(query.toLowerCase()))
+    .slice(0, 8);
+  const assetCandidates = assets
+    .filter((asset) => !asset.trashed && !referencedAssets.some((entry) => entry.id === asset.id))
+    .filter((asset) => `${asset.name} ${asset.relativePath} ${asset.tags.join(" ")}`.toLowerCase().includes(query.toLowerCase()))
     .slice(0, 8);
 
   const applyMention = (task: Task) => {
@@ -252,6 +270,16 @@ export function Composer({
     setUsedSkills((prev) =>
       prev.includes(skill.name) ? prev : [...prev, skill.name]
     );
+    setMenu("none");
+    ta?.focus();
+  };
+
+  const applyAsset = (asset: AssetRecord) => {
+    const ta = taRef.current;
+    const caret = ta?.selectionStart ?? input.length;
+    const before = input.slice(0, caret).replace(/#([^\s#]*)$/, "");
+    setInput(`${before}#${asset.name} ${input.slice(caret)}`);
+    setReferencedAssets((current) => [...current, asset]);
     setMenu("none");
     ta?.focus();
   };
@@ -351,7 +379,8 @@ export function Composer({
         text,
         mentions.filter((m) => input.includes(`@${m.title}`)).map((m) => m.id),
         usedSkills.filter((n) => input.includes(`$${n}`)),
-        sendingAttachments
+        sendingAttachments,
+        referencedAssets.filter((asset) => input.includes(`#${asset.name}`))
       );
       if (!sent) return;
       const sentIds = new Set(sendingAttachments.map((item) => item.id));
@@ -364,6 +393,7 @@ export function Composer({
       setMentions([]);
       setUsedSkills([]);
       setAttachments(remaining);
+      setReferencedAssets([]);
       setMenu("none");
     } finally {
       submittingRef.current = false;
@@ -382,11 +412,14 @@ export function Composer({
   };
 
   const currentModelLabel = modelOverride
-    ? models?.find(
+    ? (() => {
+        const selected = models?.find(
         (model) =>
           model.providerId === modelOverride.providerId &&
           model.modelId === modelOverride.modelId
-      )?.name ?? modelOverride.modelId
+        );
+        return selected ? `${selected.providerName} / ${selected.name}` : modelOverride.modelId;
+      })()
     : "助手路由";
 
   const menuItems =
@@ -394,8 +427,10 @@ export function Composer({
       ? mentionCandidates
       : menu === "slash"
         ? slashCandidates
-        : menu === "skill"
+      : menu === "skill"
           ? skillCandidates
+          : menu === "asset"
+            ? assetCandidates
           : [];
 
   return (
@@ -442,6 +477,23 @@ export function Composer({
               >
                 <X className="size-2.5" />
               </button>
+            </Badge>
+          ))}
+        </div>
+      )}
+      {referencedAssets.length > 0 && (
+        <div className="mb-1.5 flex flex-wrap gap-1">
+          {referencedAssets.map((asset) => (
+            <Badge key={asset.id} variant="outline" className="gap-1 pr-1 text-[11px]">
+              #{asset.name}
+              <button
+                aria-label="移除资产引用"
+                className="rounded-full p-0.5 hover:bg-foreground/10"
+                onClick={() => {
+                  setReferencedAssets((items) => items.filter((item) => item.id !== asset.id));
+                  setInput((value) => value.replace(`#${asset.name}`, "").replace(/\s{2,}/g, " "));
+                }}
+              ><X className="size-2.5" /></button>
             </Badge>
           ))}
         </div>
@@ -504,6 +556,8 @@ export function Composer({
                 ? "引用任务（↑↓ 选择，⏎ 确认）"
                 : menu === "skill"
                   ? "引用 skill（~/.mailuo/ai/skills）"
+                  : menu === "asset"
+                    ? "引用项目资产（#）"
                   : "快捷指令"}
             </p>
             {menu === "mention"
@@ -544,6 +598,21 @@ export function Composer({
                       </span>
                       <span className="truncate text-xs text-muted-foreground">
                         {s.description}
+                      </span>
+                    </button>
+                  ))
+                : menu === "asset"
+                  ? assetCandidates.map((asset, i) => (
+                    <button
+                      key={asset.id}
+                      className={cn("flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm", i === highlight ? "bg-accent" : "hover:bg-accent/60")}
+                      onMouseEnter={() => setHighlight(i)}
+                      onClick={() => applyAsset(asset)}
+                    >
+                      <Hash className="size-3.5 text-primary" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate">{asset.name}</span>
+                        <span className="block truncate text-[10px] text-muted-foreground">{asset.relativePath}</span>
                       </span>
                     </button>
                   ))
@@ -594,6 +663,7 @@ export function Composer({
                 e.preventDefault();
                 if (menu === "mention") applyMention(mentionCandidates[highlight]);
                 else if (menu === "skill") applySkill(skillCandidates[highlight]);
+                else if (menu === "asset") applyAsset(assetCandidates[highlight]);
                 else applySlash(slashCandidates[highlight]);
                 return;
               }
@@ -673,11 +743,9 @@ export function Composer({
                         }
                       >
                         {selected && <Check className="size-3.5" />}
-                        <span className={cn("truncate", selected && "font-medium")}>
-                          {m.name}
-                        </span>
-                        <span className="ml-auto text-[10px] text-muted-foreground">
-                          {m.providerName}
+                        <span className={cn("min-w-0 flex-1", selected && "font-medium")}>
+                          <span className="block truncate">{m.providerName} / {m.name}</span>
+                          <span className="block truncate font-mono text-[10px] text-muted-foreground">{m.modelId}</span>
                         </span>
                       </DropdownMenuItem>
                     );
@@ -709,6 +777,20 @@ export function Composer({
           >
             <AtSign className="size-3.5" />
           </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="引用项目资产"
+            className="size-6.5 text-muted-foreground hover:text-foreground"
+            onClick={() => {
+              setInput((value) => `${value}#`);
+              setMenu("asset");
+              setQuery("");
+              const projectId = useAppStore.getState().selectedProjectId;
+              if (projectId) void bridge?.listAssets(projectId).then(setAssets);
+              taRef.current?.focus();
+            }}
+          ><Hash className="size-3.5" /></Button>
           <Button
             variant="ghost"
             size="icon-sm"

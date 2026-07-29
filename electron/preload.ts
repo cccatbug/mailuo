@@ -16,6 +16,7 @@ import type {
   RouteResolutionStatus,
 } from "../src/shared/ai-config";
 import type { OneShotUseCase } from "../src/shared/ai-prompts";
+import type { AssetRecord } from "../src/shared/assets";
 
 const api = {
   platform: process.platform as NodeJS.Platform,
@@ -119,6 +120,25 @@ const api = {
     ipcRenderer.invoke("mailuo:memory-append", note),
   workspaceDir: (projectId: string): Promise<string> =>
     ipcRenderer.invoke("mailuo:workspace-dir", projectId),
+  listAssets: (projectId: string): Promise<AssetRecord[]> =>
+    ipcRenderer.invoke("assets:list", projectId),
+  resolveAsset: (projectId: string, assetId: string): Promise<{ asset: AssetRecord; absolutePath: string }> =>
+    ipcRenderer.invoke("assets:resolve", projectId, assetId),
+  updateAsset: (
+    projectId: string,
+    assetId: string,
+    patch: { name?: string; tags?: string[]; favorite?: boolean }
+  ): Promise<AssetRecord> => ipcRenderer.invoke("assets:update", projectId, assetId, patch),
+  trashAsset: (projectId: string, assetId: string): Promise<void> =>
+    ipcRenderer.invoke("assets:trash", projectId, assetId),
+  restoreAsset: (projectId: string, assetId: string): Promise<void> =>
+    ipcRenderer.invoke("assets:restore", projectId, assetId),
+  emptyAssetTrash: (projectId: string): Promise<void> =>
+    ipcRenderer.invoke("assets:empty-trash", projectId),
+  importAssets: (projectId: string): Promise<AssetRecord[]> =>
+    ipcRenderer.invoke("assets:import", projectId),
+  revealAsset: (projectId: string, assetId: string): Promise<void> =>
+    ipcRenderer.invoke("assets:reveal", projectId, assetId),
 
   onAssistantEvent: (
     handler: (requestId: string, event: AssistantEventPayload) => void

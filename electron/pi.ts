@@ -73,6 +73,7 @@ const SAFE_IMAGE_MIME_TYPES = new Set([
   "image/jpeg",
   "image/png",
   "image/webp",
+  "image/svg+xml",
 ]);
 
 /** 为工作区图片生成渲染用 data URL；路径和 MIME 均由主进程再次校验。 */
@@ -85,6 +86,18 @@ export async function readMailuoImageDataUrl(
     throw new Error("不支持预览此图片格式");
   }
   const bytes = await fs.readFile(assertInHome(p));
+  if (normalizedMime === "image/svg+xml") {
+    if (bytes.length > 5 * 1024 * 1024) throw new Error("SVG 预览不能超过 5 MB");
+    let svg = bytes.toString("utf8");
+    if (!/<svg[\s>]/i.test(svg)) throw new Error("文件内容不是 SVG");
+    svg = svg
+      .replace(/<script[\s\S]*?<\/script\s*>/gi, "")
+      .replace(/<foreignObject[\s\S]*?<\/foreignObject\s*>/gi, "")
+      .replace(/<(?:iframe|object|embed)\b[\s\S]*?<\/(?:iframe|object|embed)\s*>/gi, "")
+      .replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*')/gi, "")
+      .replace(/\s(?:href|xlink:href)\s*=\s*(["'])\s*(?:https?:|javascript:|data:text\/html)[\s\S]*?\1/gi, "");
+    return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+  }
   const detectedMime = detectImageMimeType(bytes);
   if (!detectedMime) throw new Error("文件内容不是受支持的图片");
   return `data:${detectedMime};base64,${bytes.toString("base64")}`;

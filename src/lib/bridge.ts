@@ -15,6 +15,7 @@ import type {
   RouteResolutionStatus,
 } from "@/shared/ai-config";
 import type { OneShotUseCase } from "@/shared/ai-prompts";
+import type { AssetRecord } from "@/shared/assets";
 
 export type {
   AssistantAttachmentMeta,
@@ -90,6 +91,18 @@ export interface MailuoApi {
   memoryPath: () => Promise<string>;
   memoryAppend: (note: string) => Promise<void>;
   workspaceDir: (projectId: string) => Promise<string>;
+  listAssets: (projectId: string) => Promise<AssetRecord[]>;
+  resolveAsset: (projectId: string, assetId: string) => Promise<{ asset: AssetRecord; absolutePath: string }>;
+  updateAsset: (
+    projectId: string,
+    assetId: string,
+    patch: { name?: string; tags?: string[]; favorite?: boolean }
+  ) => Promise<AssetRecord>;
+  trashAsset: (projectId: string, assetId: string) => Promise<void>;
+  restoreAsset: (projectId: string, assetId: string) => Promise<void>;
+  emptyAssetTrash: (projectId: string) => Promise<void>;
+  importAssets: (projectId: string) => Promise<AssetRecord[]>;
+  revealAsset: (projectId: string, assetId: string) => Promise<void>;
   onAssistantEvent: (
     handler: (requestId: string, event: AssistantEventPayload) => void
   ) => () => void;

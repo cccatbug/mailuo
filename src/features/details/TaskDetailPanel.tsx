@@ -70,6 +70,8 @@ import { dependentsOf, isBlocked, wouldCreateCycle } from "@/lib/deps";
 import { MiniBoard } from "@/features/matrix/MiniBoard";
 import { polishNotesWithToast } from "@/features/tasks/TaskListPanel";
 import { Md } from "@/features/ai/Markdown";
+import { bridge } from "@/lib/bridge";
+import type { AssetRecord } from "@/shared/assets";
 
 /** Obsidian 式备注：失焦渲染 markdown，点击进入编辑 */
 function NotesEditor({
@@ -80,16 +82,50 @@ function NotesEditor({
   onChange: (v: string) => void;
 }) {
   const [editing, setEditing] = useState(!value);
+  const projectId = useAppStore((state) => state.selectedProjectId);
+  const [assets, setAssets] = useState<AssetRecord[]>([]);
+  const [assetQuery, setAssetQuery] = useState<string | null>(null);
   if (editing) {
     return (
-      <Textarea
-        autoFocus={Boolean(value)}
-        value={value}
-        placeholder="写点什么…（支持 markdown）"
-        className="min-h-24 resize-y font-mono text-xs leading-relaxed"
-        onChange={(e) => onChange(e.target.value)}
-        onBlur={() => value.trim() && setEditing(false)}
-      />
+      <div className="relative">
+        {assetQuery !== null && (
+          <div className="absolute right-0 bottom-full left-0 z-20 mb-1 max-h-48 overflow-y-auto rounded-lg border bg-popover p-1 shadow-lg">
+            {assets
+              .filter((asset) => !asset.trashed && `${asset.name} ${asset.relativePath}`.toLowerCase().includes(assetQuery.toLowerCase()))
+              .slice(0, 8)
+              .map((asset) => (
+                <button
+                  key={asset.id}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent"
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    onChange(value.replace(/#([^\s#]*)$/, `[#${asset.name}](mailuo-asset:${asset.id}) `));
+                    setAssetQuery(null);
+                  }}
+                >
+                  <span className="truncate font-medium">#{asset.name}</span>
+                  <span className="ml-auto max-w-48 truncate text-[10px] text-muted-foreground">{asset.relativePath}</span>
+                </button>
+              ))}
+          </div>
+        )}
+        <Textarea
+          autoFocus={Boolean(value)}
+          value={value}
+          placeholder="写点什么…（支持 markdown，输入 # 引用项目资产）"
+          className="min-h-24 resize-y font-mono text-xs leading-relaxed"
+          onChange={(e) => {
+            onChange(e.target.value);
+            const match = /(?:^|\s)#([^\s#]*)$/.exec(e.target.value.slice(0, e.target.selectionStart ?? 0));
+            setAssetQuery(match?.[1] ?? null);
+            if (match && projectId) void bridge?.listAssets(projectId).then(setAssets);
+          }}
+          onBlur={() => {
+            setAssetQuery(null);
+            if (value.trim()) setEditing(false);
+          }}
+        />
+      </div>
     );
   }
   return (

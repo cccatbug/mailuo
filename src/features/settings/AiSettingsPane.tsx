@@ -51,8 +51,14 @@ import {
 } from "@/shared/ai-config";
 import { useAiConfigStore } from "@/store/useAiConfigStore";
 import { cn } from "@/lib/utils";
+import {
+  loadPromptTemplates,
+  savePromptTemplates,
+  type PromptKind,
+  type PromptTemplate,
+} from "@/features/ai/promptTemplates";
 
-type AiSection = "providers" | "models" | "routes" | "context" | "network";
+type AiSection = "providers" | "models" | "routes" | "prompts" | "context" | "network";
 
 const USE_CASE_LABELS: Record<AiUseCase, string> = {
   assistant: "助手",
@@ -187,6 +193,7 @@ const SECTION_ITEMS: Array<{
   { key: "providers", label: "Provider", icon: Server },
   { key: "models", label: "已启用模型", icon: Sparkles },
   { key: "routes", label: "用途路由", icon: RefreshCw },
+  { key: "prompts", label: "提示词模板", icon: Copy },
   { key: "context", label: "上下文配置档", icon: Copy },
   { key: "network", label: "网络", icon: Network },
 ];
@@ -1602,7 +1609,8 @@ function RoutesPane({
                       key={modelRefKey(model)}
                       value={modelRefKey(model)}
                     >
-                      {model.name}
+                      {config.providers.find((provider) => provider.id === model.providerId)?.name ?? model.providerId} / {model.name}
+                      <span className="ml-2 font-mono text-[10px] text-muted-foreground">{model.modelId}</span>
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -2025,6 +2033,58 @@ function NetworkPane({
   );
 }
 
+const PROMPT_KIND_LABEL: Record<PromptKind, string> = {
+  "project-plan": "项目规划",
+  "task-breakdown": "任务拆解",
+  "dependency-suggest": "依赖建议",
+  "notes-polish": "备注润色",
+};
+
+function PromptTemplatesPane() {
+  const [items, setItems] = useState<PromptTemplate[]>(loadPromptTemplates);
+  const [query, setQuery] = useState("");
+  const persist = (next: PromptTemplate[]) => {
+    setItems(next);
+    savePromptTemplates(next);
+  };
+  const add = () => persist([...items, {
+    id: crypto.randomUUID(),
+    name: "新模板",
+    kind: "notes-polish",
+    prompt: "",
+    tags: [],
+    isDefault: false,
+    updatedAt: Date.now(),
+  }]);
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-2">
+        <Input value={query} placeholder="搜索名称、标签或提示词…" onChange={(event) => setQuery(event.target.value)} />
+        <Button onClick={add}><Plus />新建模板</Button>
+      </div>
+      {items.filter((item) => `${item.name} ${item.tags.join(" ")} ${item.prompt}`.toLowerCase().includes(query.toLowerCase())).map((item) => (
+        <div key={item.id} className="rounded-lg border p-3">
+          <div className="mb-2 grid grid-cols-[1fr_150px_auto_auto] gap-2">
+            <Input value={item.name} onChange={(event) => persist(items.map((entry) => entry.id === item.id ? { ...entry, name: event.target.value, updatedAt: Date.now() } : entry))} />
+            <Select value={item.kind} onValueChange={(kind) => persist(items.map((entry) => entry.id === item.id ? { ...entry, kind: kind as PromptKind, isDefault: false } : entry))}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>{Object.entries(PROMPT_KIND_LABEL).map(([kind, label]) => <SelectItem key={kind} value={kind}>{label}</SelectItem>)}</SelectContent>
+            </Select>
+            <Button
+              variant={item.isDefault ? "secondary" : "outline"}
+              size="sm"
+              onClick={() => persist(items.map((entry) => entry.kind === item.kind ? { ...entry, isDefault: entry.id === item.id } : entry))}
+            >{item.isDefault ? "默认" : "设为默认"}</Button>
+            <Button variant="ghost" size="icon-sm" className="text-destructive" onClick={() => persist(items.filter((entry) => entry.id !== item.id))}><Trash2 /></Button>
+          </div>
+          <Textarea value={item.prompt} placeholder="输入提示词…" onChange={(event) => persist(items.map((entry) => entry.id === item.id ? { ...entry, prompt: event.target.value, updatedAt: Date.now() } : entry))} />
+          <Input className="mt-2 h-8" value={item.tags.join(", ")} placeholder="标签，用逗号分隔" onChange={(event) => persist(items.map((entry) => entry.id === item.id ? { ...entry, tags: event.target.value.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean) } : entry))} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function AiSettingsPane() {
   const snapshot = useAiConfigStore((state) => state.snapshot);
   const loading = useAiConfigStore((state) => state.loading);
@@ -2152,6 +2212,7 @@ export function AiSettingsPane() {
           onSave={saveConfig}
         />
       )}
+      {section === "prompts" && <PromptTemplatesPane />}
       {section === "context" && (
         <ContextPane
           config={config}

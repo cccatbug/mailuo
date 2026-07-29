@@ -8,6 +8,7 @@ import {
   DockLayout,
   ensureWorkspace,
   relocateAssistant,
+  focusOrOpenBrowser,
 } from "@/components/DockLayout";
 import { ProjectSidebar } from "@/features/projects/ProjectSidebar";
 import { CommandPalette } from "@/features/command/CommandPalette";
@@ -151,6 +152,9 @@ export default function App() {
       } else if (e.key.toLowerCase() === "b") {
         e.preventDefault();
         togglePanel(e.shiftKey ? "right" : "left");
+      } else if (e.shiftKey && e.key.toLowerCase() === "g") {
+        e.preventDefault();
+        focusOrOpenBrowser();
       }
     };
     window.addEventListener("keydown", onKey);
