@@ -17,6 +17,19 @@ import type {
 import type { OneShotUseCase } from "@/shared/ai-prompts";
 import type { AssetRecord } from "@/shared/assets";
 
+export interface BrowserSessionSnapshot {
+  persistent: boolean;
+  storagePath: string | null;
+  cookieCount: number;
+  cacheSize: number;
+  userAgent: string;
+}
+
+export interface BrowserCookieImportResult {
+  imported: number;
+  skipped: number;
+}
+
 export type {
   AssistantAttachmentMeta,
   AssistantAttachmentPayload,
@@ -103,7 +116,16 @@ export interface MailuoApi {
   emptyAssetTrash: (projectId: string) => Promise<void>;
   importAssets: (projectId: string) => Promise<AssetRecord[]>;
   revealAsset: (projectId: string, assetId: string) => Promise<void>;
-  clearBrowserData: () => Promise<void>;
+  getBrowserSession: () => Promise<BrowserSessionSnapshot>;
+  flushBrowserSession: () => Promise<void>;
+  openBrowserStorage: () => Promise<string>;
+  importBrowserCookies: () => Promise<BrowserCookieImportResult | null>;
+  onBrowserDownload: (
+    handler: (event: { state: string; filename: string; path: string }) => void
+  ) => () => void;
+  openBrowserDownload: (filePath: string) => Promise<string>;
+  onBrowserOpenTab: (handler: (url: string) => void) => () => void;
+  clearBrowserData: (scope?: "cookies" | "all") => Promise<void>;
   listAssetFolders: (projectId: string) => Promise<string[]>;
   createAssetFolder: (projectId: string, relativePath: string) => Promise<void>;
   moveAsset: (projectId: string, assetId: string, folder: string) => Promise<AssetRecord>;

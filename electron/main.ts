@@ -3,10 +3,7 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
-  session,
   shell,
-  type MessageBoxOptions,
-  type WebContents,
 } from "electron";
 import { promises as fs } from "node:fs";
 import os from "node:os";
@@ -58,9 +55,13 @@ import {
   listProjectFolders,
   moveAsset,
 } from "./asset-store";
+import {
+  BROWSER_PARTITION,
+  BROWSER_SESSION,
+  isExternalBrowserProtocol,
+} from "./browser-session";
 
 const isMac = process.platform === "darwin";
-const BROWSER_PARTITION = "persist:mailuo-browser";
 
 /* ---------- 数据持久化（原子写入 + 旧 Tauri 数据迁移） ---------- */
 
@@ -129,84 +130,35 @@ function createWindow() {
     void shell.openExternal(url);
     return { action: "deny" };
   });
+  win.webContents.on("will-attach-webview", (event, webPreferences, params) => {
+    const src = typeof params.src === "string" ? params.src : "";
+    if (
+      !src ||
+      isExternalBrowserProtocol(src) ||
+      webPreferences.partition !== BROWSER_PARTITION
+    ) {
+      event.preventDefault();
+      return;
+    }
+    delete webPreferences.preload;
+    delete (webPreferences as Record<string, unknown>).preloadURL;
+    webPreferences.partition = BROWSER_PARTITION;
+    webPreferences.nodeIntegration = false;
+    webPreferences.nodeIntegrationInSubFrames = false;
+    webPreferences.contextIsolation = true;
+    webPreferences.sandbox = true;
+    webPreferences.webSecurity = true;
+    webPreferences.allowRunningInsecureContent = false;
+  });
+  win.webContents.on("did-attach-webview", (_event, contents) => {
+    BROWSER_SESSION.configureContents(contents);
+  });
 
   if (process.env.ELECTRON_RENDERER_URL) {
     void win.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
     void win.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
-}
-
-function externalProtocol(url: string): boolean {
-  try {
-    const protocol = new URL(url).protocol;
-    return !["http:", "https:", "about:", "data:", "blob:"].includes(protocol);
-  } catch {
-    return false;
-  }
-}
-
-/** 配置内置浏览器及其 OAuth 子窗口；共享持久 Session，保留 Cookie/缓存/认证态。 */
-function configureBrowserContents(contents: WebContents) {
-  contents.setWindowOpenHandler(({ url }) => {
-    if (externalProtocol(url)) {
-      void shell.openExternal(url);
-      return { action: "deny" };
-    }
-    return {
-      action: "allow",
-      overrideBrowserWindowOptions: {
-        width: 920,
-        height: 720,
-        minWidth: 480,
-        minHeight: 420,
-        autoHideMenuBar: true,
-        backgroundColor: "#ffffff",
-        webPreferences: {
-          partition: BROWSER_PARTITION,
-          sandbox: true,
-          contextIsolation: true,
-          nodeIntegration: false,
-        },
-      },
-    };
-  });
-  contents.on("will-navigate", (event, url) => {
-    if (!externalProtocol(url)) return;
-    event.preventDefault();
-    void shell.openExternal(url);
-  });
-  contents.on("did-create-window", (child) => configureBrowserContents(child.webContents));
-}
-
-function configureBrowserSession() {
-  const browserSession = session.fromPartition(BROWSER_PARTITION);
-  browserSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
-    const allowed = new Set(["clipboard-sanitized-write", "fullscreen", "pointerLock"]);
-    if (allowed.has(permission)) return callback(true);
-    if (!["media", "geolocation", "notifications"].includes(permission)) {
-      return callback(false);
-    }
-    const origin = (() => {
-      try { return new URL(details.requestingUrl).origin; } catch { return details.requestingUrl; }
-    })();
-    const permissionDialog = {
-        type: "question",
-        buttons: ["允许", "拒绝"],
-        defaultId: 1,
-        cancelId: 1,
-        title: "网页权限请求",
-        message: `${origin} 请求${permission === "media" ? "使用摄像头或麦克风" : permission === "geolocation" ? "获取位置" : "发送通知"}`,
-        detail: "仅在你信任该网站时允许。",
-      } satisfies MessageBoxOptions;
-    const parent = BrowserWindow.fromWebContents(webContents) ?? win;
-    const request = parent
-      ? dialog.showMessageBox(parent, permissionDialog)
-      : dialog.showMessageBox(permissionDialog);
-    void request
-      .then(({ response }) => callback(response === 0))
-      .catch(() => callback(false));
-  });
 }
 
 /* ---------- IPC ---------- */
@@ -281,14 +233,33 @@ function registerIpc() {
   ipcMain.handle("assets:move", (_e, projectId: string, assetId: string, folder: string) =>
     moveAsset(projectId, assetId, folder)
   );
-  ipcMain.handle("browser:clear-data", async () => {
-    const browserSession = session.fromPartition(BROWSER_PARTITION);
-    await Promise.all([
-      browserSession.clearCache(),
-      browserSession.clearStorageData(),
-      browserSession.clearAuthCache(),
-    ]);
+  ipcMain.handle("browser:session:snapshot", () => BROWSER_SESSION.snapshot());
+  ipcMain.handle("browser:session:flush", () => BROWSER_SESSION.flush());
+  ipcMain.handle("browser:session:open-storage", () =>
+    shell.openPath(BROWSER_SESSION.storageDirectory)
+  );
+  ipcMain.handle("browser:cookies:import", async () => {
+    const result = await dialog.showOpenDialog({
+      title: "导入浏览器 Cookie",
+      filters: [{ name: "Cookie JSON", extensions: ["json"] }],
+      properties: ["openFile"],
+    });
+    if (result.canceled || !result.filePaths[0]) return null;
+    const raw = JSON.parse(await fs.readFile(result.filePaths[0], "utf8"));
+    return BROWSER_SESSION.importCookies(raw);
   });
+  ipcMain.handle("browser:download:open", (_event, filePath: string) => {
+    const downloads = path.resolve(app.getPath("downloads"));
+    const candidate = path.resolve(filePath);
+    if (candidate !== downloads && !candidate.startsWith(`${downloads}${path.sep}`)) {
+      throw new Error("只能打开下载目录内的文件");
+    }
+    return shell.openPath(candidate);
+  });
+  ipcMain.handle(
+    "browser:clear-data",
+    (_event, scope: "cookies" | "all" = "all") => BROWSER_SESSION.clear(scope)
+  );
 
   ipcMain.handle("agent:models", () => listModels());
   ipcMain.handle("agent:skills", () => listSkills());
@@ -484,7 +455,7 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on("web-contents-created", (_event, contents) => {
-    if (contents.getType() === "webview") configureBrowserContents(contents);
+    if (contents.getType() === "webview") BROWSER_SESSION.configureContents(contents);
   });
   app.on("second-instance", () => {
     if (win) {
@@ -495,7 +466,7 @@ if (!app.requestSingleInstanceLock()) {
 
   void app.whenReady().then(async () => {
     registerIpc();
-    configureBrowserSession();
+    BROWSER_SESSION.initialize(() => win);
     createWindow();
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -507,7 +478,14 @@ if (!app.requestSingleInstanceLock()) {
     if (!isMac) app.quit();
   });
 
-  app.on("before-quit", () => {
+  let browserDataFlushed = false;
+  app.on("before-quit", (event) => {
     assistantReset();
+    if (browserDataFlushed) return;
+    event.preventDefault();
+    browserDataFlushed = true;
+    void BROWSER_SESSION.flush()
+      .catch(() => undefined)
+      .finally(() => app.quit());
   });
 }

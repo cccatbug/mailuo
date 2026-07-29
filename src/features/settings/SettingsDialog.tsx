@@ -4,6 +4,7 @@ import {
   Copy,
   Database,
   FolderOpen,
+  Globe2,
   Info,
   MoonStar,
   Palette,
@@ -45,6 +46,8 @@ import { hasNative } from "@/lib/platform";
 import { useAppStore } from "@/store/useAppStore";
 import { seedData } from "@/store/seed";
 import { AiSettingsPane } from "./AiSettingsPane";
+import { BrowserSettingsPane } from "./BrowserSettingsPane";
+import packageInfo from "../../../package.json";
 
 /* ---------- Obsidian 式设置行：左侧名称+描述，右侧控件 ---------- */
 
@@ -309,7 +312,7 @@ function AboutPane() {
       </div>
       <div>
         <p className="font-heading text-lg font-bold tracking-[0.3em]">脉络</p>
-        <p className="text-xs text-muted-foreground">MÀI LUÒ · v0.1.0</p>
+        <p className="text-xs text-muted-foreground">MÀI LUÒ · v{packageInfo.version}</p>
       </div>
       <p className="max-w-64 text-sm text-muted-foreground">
         项目驱动、以依赖为脉络的待办应用。米纸为底，松墨为骨，朱砂点睛。
@@ -326,6 +329,7 @@ function AboutPane() {
 const PANES = [
   { key: "appearance", label: "外观", icon: Palette, pane: AppearancePane },
   { key: "ai", label: "AI", icon: Bot, pane: AiSettingsPane },
+  { key: "browser", label: "浏览器", icon: Globe2, pane: BrowserSettingsPane },
   { key: "data", label: "数据", icon: Database, pane: DataPane },
   { key: "about", label: "关于", icon: Info, pane: AboutPane },
 ] as const;

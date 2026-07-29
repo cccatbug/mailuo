@@ -6,11 +6,18 @@ directories:
 artifactName: Mailuo-${version}-${os}-${arch}.${ext}
 files:
   - out/**
+extraResources:
+  - from: THIRD_PARTY_NOTICES.md
+    to: THIRD_PARTY_NOTICES.md
 asarUnpack:
   - node_modules/@earendil-works/**
 mac:
   icon: build/icon.icns
   category: public.app-category.productivity
+  extendInfo:
+    NSCameraUsageDescription: 脉络内置浏览器需要相机权限以支持网页扫码和视频功能。
+    NSMicrophoneUsageDescription: 脉络内置浏览器需要麦克风权限以支持网页通话和录音功能。
+    NSLocationWhenInUseUsageDescription: 脉络仅在网页明确请求且你允许时使用位置信息。
   target:
     - dmg
     - zip

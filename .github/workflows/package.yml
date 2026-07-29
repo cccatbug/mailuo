@@ -218,6 +218,11 @@ jobs:
       RELEASE_TAG: ${{ needs.prepare_release.outputs.tag || github.ref_name }}
 
     steps:
+      - name: Checkout release notes
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
       - name: Download packaged installers
         uses: actions/download-artifact@v5
         with:
@@ -243,6 +248,16 @@ jobs:
             -f tag_name="$RELEASE_TAG" \
             -f target_commitish="$RELEASE_TAG" \
             --jq '.body' > release-notes.md
+
+          CURATED_NOTES="release-notes/$RELEASE_TAG.md"
+          if [[ -f "$CURATED_NOTES" ]]; then
+            {
+              cat "$CURATED_NOTES"
+              printf '\n\n'
+              cat release-notes.md
+            } > release-notes-combined.md
+            mv release-notes-combined.md release-notes.md
+          fi
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" release-assets/* --clobber

@@ -9,12 +9,14 @@ import {
   ensureWorkspace,
   relocateAssistant,
   focusOrOpenBrowser,
+  openBrowserPanel,
 } from "@/components/DockLayout";
 import { ProjectSidebar } from "@/features/projects/ProjectSidebar";
 import { CommandPalette } from "@/features/command/CommandPalette";
 import { SettingsDialog } from "@/features/settings/SettingsDialog";
 import { AiDialogs } from "@/features/ai/AiDialogs";
 import { bridge } from "@/lib/bridge";
+import { toast } from "sonner";
 import { isMac } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 
@@ -95,6 +97,25 @@ export default function App() {
   useEffect(() => {
     void init();
   }, [init]);
+
+  useEffect(() => {
+    return bridge?.onBrowserDownload((event) => {
+      if (event.state === "started") {
+        toast.info(`开始下载 ${event.filename}`);
+      } else if (event.state === "completed") {
+        toast.success(`已下载 ${event.filename}`, {
+          action: {
+            label: "打开",
+            onClick: () => void bridge?.openBrowserDownload(event.path),
+          },
+        });
+      } else {
+        toast.error(`下载未完成：${event.filename}`);
+      }
+    });
+  }, []);
+
+  useEffect(() => bridge?.onBrowserOpenTab((url) => openBrowserPanel(url)), []);
 
   // 原生窗口标题跟随当前项目与视图
   const projects = useAppStore((s) => s.projects);

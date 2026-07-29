@@ -139,8 +139,33 @@ const api = {
     ipcRenderer.invoke("assets:import", projectId),
   revealAsset: (projectId: string, assetId: string): Promise<void> =>
     ipcRenderer.invoke("assets:reveal", projectId, assetId),
-  clearBrowserData: (): Promise<void> =>
-    ipcRenderer.invoke("browser:clear-data"),
+  getBrowserSession: () =>
+    ipcRenderer.invoke("browser:session:snapshot"),
+  flushBrowserSession: (): Promise<void> =>
+    ipcRenderer.invoke("browser:session:flush"),
+  openBrowserStorage: (): Promise<string> =>
+    ipcRenderer.invoke("browser:session:open-storage"),
+  importBrowserCookies: () =>
+    ipcRenderer.invoke("browser:cookies:import"),
+  onBrowserDownload: (
+    handler: (event: { state: string; filename: string; path: string }) => void
+  ): (() => void) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      payload: { state: string; filename: string; path: string }
+    ) => handler(payload);
+    ipcRenderer.on("browser:download", listener);
+    return () => ipcRenderer.removeListener("browser:download", listener);
+  },
+  openBrowserDownload: (filePath: string): Promise<string> =>
+    ipcRenderer.invoke("browser:download:open", filePath),
+  onBrowserOpenTab: (handler: (url: string) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, url: string) => handler(url);
+    ipcRenderer.on("browser:open-tab", listener);
+    return () => ipcRenderer.removeListener("browser:open-tab", listener);
+  },
+  clearBrowserData: (scope: "cookies" | "all" = "all"): Promise<void> =>
+    ipcRenderer.invoke("browser:clear-data", scope),
   listAssetFolders: (projectId: string): Promise<string[]> =>
     ipcRenderer.invoke("assets:folders", projectId),
   createAssetFolder: (projectId: string, relativePath: string): Promise<void> =>
