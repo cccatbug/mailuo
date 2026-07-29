@@ -2,7 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
 import {
   Archive,
+  BookOpen,
+  BriefcaseBusiness,
+  FlaskConical,
   FolderPlus,
+  House,
   PanelLeftClose,
   ArchiveRestore,
   ChevronDown,
@@ -13,8 +17,11 @@ import {
   Pencil,
   Pin,
   PinOff,
+  Rocket,
   Sparkles,
+  Target,
   Trash2,
+  type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -58,6 +65,41 @@ import { useAppStore } from "@/store/useAppStore";
 import { isBlocked } from "@/lib/deps";
 import type { Project, Task } from "@/types";
 import { PROJECT_COLORS } from "@/types";
+
+const PROJECT_ICON_OPTIONS: Array<{
+  id: string;
+  label: string;
+  icon: LucideIcon;
+  legacy?: string;
+}> = [
+  { id: "rocket", label: "推进", icon: Rocket, legacy: "\u{1F680}" },
+  { id: "book-open", label: "阅读", icon: BookOpen, legacy: "\u{1F4DA}" },
+  {
+    id: "briefcase",
+    label: "工作",
+    icon: BriefcaseBusiness,
+    legacy: "\u{1F4BC}",
+  },
+  { id: "house", label: "生活", icon: House, legacy: "\u{1F3E1}" },
+  { id: "target", label: "目标", icon: Target, legacy: "\u{1F3AF}" },
+  { id: "flask", label: "实验", icon: FlaskConical, legacy: "\u{1F9EA}" },
+];
+
+function normalizeProjectIcon(value: string | undefined): string {
+  if (!value) return "";
+  return (
+    PROJECT_ICON_OPTIONS.find(
+      (option) => option.id === value || option.legacy === value
+    )?.id ?? ""
+  );
+}
+
+function projectIconComponent(value: string | undefined): LucideIcon | null {
+  const normalized = normalizeProjectIcon(value);
+  return (
+    PROJECT_ICON_OPTIONS.find((option) => option.id === normalized)?.icon ?? null
+  );
+}
 
 function ColorSwatches({
   value,
@@ -105,7 +147,7 @@ function ProjectEditorDialog({
 
   const [name, setName] = useState(project?.name ?? "");
   const [color, setColor] = useState(project?.color ?? PROJECT_COLORS[0]);
-  const [icon, setIcon] = useState(project?.icon ?? "");
+  const [icon, setIcon] = useState(normalizeProjectIcon(project?.icon));
   const [tagsText, setTagsText] = useState((project?.tags ?? []).join(" "));
 
   const submit = () => {
@@ -154,28 +196,31 @@ function ProjectEditorDialog({
             <ColorSwatches value={color} onChange={setColor} />
           </Field>
           <Field>
-            <FieldLabel htmlFor="project-icon">图标</FieldLabel>
-            <div className="flex items-center gap-2">
-              <Input
-                id="project-icon"
-                value={icon}
-                placeholder="输入一个 emoji（留空用首字）"
-                className="flex-1"
-                onChange={(e) => setIcon(e.target.value.slice(0, 4))}
-              />
-              {["🚀", "📚", "💼", "🏡", "🎯", "🧪"].map((e) => (
-                <button
-                  key={e}
-                  type="button"
-                  className={cn(
-                    "rounded-md px-1 py-0.5 text-lg transition-transform hover:scale-110",
-                    icon === e && "bg-accent"
-                  )}
-                  onClick={() => setIcon(e)}
-                >
-                  {e}
-                </button>
-              ))}
+            <FieldLabel>图标</FieldLabel>
+            <div className="flex items-center gap-1.5">
+              {PROJECT_ICON_OPTIONS.map((option) => {
+                const Icon = option.icon;
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    aria-label={option.label}
+                    aria-pressed={icon === option.id}
+                    className={cn(
+                      "flex size-8 items-center justify-center rounded-md border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
+                      icon === option.id &&
+                        "border-primary bg-accent text-primary ring-2 ring-ring/30"
+                    )}
+                    onClick={() =>
+                      setIcon((current) =>
+                        current === option.id ? "" : option.id
+                      )
+                    }
+                  >
+                    <Icon className="size-4" />
+                  </button>
+                );
+              })}
             </div>
           </Field>
           <Field>
@@ -366,6 +411,7 @@ export function ProjectSidebar() {
         {activeList.map((p) => {
           const s = stats.get(p.id) ?? EMPTY;
           const active = p.id === selectedProjectId;
+          const ProjectIcon = projectIconComponent(p.icon);
           return (
             <li key={p.id} className="group relative">
               <ContextMenu>
@@ -383,13 +429,19 @@ export function ProjectSidebar() {
                       <span
                         className={cn(
                           "flex size-6 shrink-0 items-center justify-center rounded-md",
-                          p.icon
-                            ? "text-base"
+                          ProjectIcon
+                            ? "bg-foreground/6"
                             : "font-heading text-[11px] font-bold text-white"
                         )}
-                        style={p.icon ? undefined : { background: p.color }}
+                        style={
+                          ProjectIcon ? { color: p.color } : { background: p.color }
+                        }
                       >
-                        {p.icon || p.name.trim().charAt(0)}
+                        {ProjectIcon ? (
+                          <ProjectIcon className="size-3.5" />
+                        ) : (
+                          p.name.trim().charAt(0)
+                        )}
                       </span>
                       <span className="flex min-w-0 flex-1 items-center gap-1">
                         <span className="truncate text-sm font-medium">

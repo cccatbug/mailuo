@@ -27,7 +27,7 @@ export interface Project {
   name: string;
   color: string;
   createdAt: number;
-  /** 图标（emoji，未设置时用名称首字） */
+  /** Lucide 项目图标键，未设置时用名称首字 */
   icon?: string;
   /** 项目标签（用于侧栏过滤） */
   tags?: string[];

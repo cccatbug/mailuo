@@ -48,7 +48,7 @@ export function seedData(): PersistedData {
   const t7 = mk("SEO 迁移方案", "todo", [t3], "low", p1.id, ["增长"]);
   const t8 = mk("内容录入与排版", "todo", [t5, t6], "normal", p1.id, ["内容"]);
   const t9 = mk("全站测试", "todo", [t7, t8], "high", p1.id, ["研发"]);
-  const t10 = mk("正式上线 🎉", "todo", [t9], "high", p1.id);
+  const t10 = mk("正式上线", "todo", [t9], "high", p1.id);
 
   const r1 = mk("读完《置身事内》", "doing", [], "normal", p2.id, ["阅读"]);
   const r2 = mk("整理读书笔记", "todo", [r1], "normal", p2.id, ["笔记"]);
