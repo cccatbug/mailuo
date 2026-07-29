@@ -15,7 +15,12 @@ import type {
   RouteResolutionStatus,
 } from "@/shared/ai-config";
 import type { OneShotUseCase } from "@/shared/ai-prompts";
-import type { AssetRecord } from "@/shared/assets";
+import type {
+  AssetLibrarySnapshot,
+  AssetRecord,
+  AssetTagMode,
+  AssetTagRecord,
+} from "@/shared/assets";
 
 export interface BrowserSessionSnapshot {
   persistent: boolean;
@@ -129,6 +134,28 @@ export interface MailuoApi {
   listAssetFolders: (projectId: string) => Promise<string[]>;
   createAssetFolder: (projectId: string, relativePath: string) => Promise<void>;
   moveAsset: (projectId: string, assetId: string, folder: string) => Promise<AssetRecord>;
+  listAssetLibrary: (projectId: string) => Promise<AssetLibrarySnapshot>;
+  createAssetFile: (projectId: string, folder: string, name: string, content?: string) => Promise<AssetRecord>;
+  renameAssetFolder: (projectId: string, relativePath: string, name: string) => Promise<void>;
+  moveAssetFolder: (projectId: string, relativePath: string, destination: string) => Promise<void>;
+  duplicateAsset: (projectId: string, assetId: string) => Promise<void>;
+  copyAsset: (projectId: string, assetId: string, destination: string) => Promise<void>;
+  duplicateAssetFolder: (projectId: string, relativePath: string) => Promise<void>;
+  trashAssetFolder: (projectId: string, relativePath: string) => Promise<void>;
+  permanentlyDeleteAsset: (projectId: string, assetId: string) => Promise<void>;
+  createAssetTag: (projectId: string, name: string, color: string) => Promise<AssetTagRecord>;
+  updateAssetTag: (
+    projectId: string,
+    tagId: string,
+    patch: { name?: string; color?: string }
+  ) => Promise<AssetTagRecord>;
+  deleteAssetTag: (projectId: string, tagId: string) => Promise<void>;
+  assignAssetTags: (
+    projectId: string,
+    assetIds: string[],
+    tagNames: string[],
+    mode: AssetTagMode
+  ) => Promise<void>;
   onAssistantEvent: (
     handler: (requestId: string, event: AssistantEventPayload) => void
   ) => () => void;

@@ -11,6 +11,8 @@ vi.mock("electron", () => ({
 }));
 
 import {
+  BROWSER_PARTITION,
+  BrowserSessionManager,
   cleanElectronUserAgent,
   isExternalBrowserProtocol,
 } from "./browser-session";
@@ -43,6 +45,42 @@ describe("browser session compatibility", () => {
       "not a url",
     ]) {
       expect(isExternalBrowserProtocol(url), url).toBe(true);
+    }
+  });
+
+  it("keeps featureless CAS/OAuth windows in the shared persistent session", () => {
+    let openHandler:
+      | ((details: { url: string; disposition: string }) => {
+          action: string;
+          overrideBrowserWindowOptions?: Electron.BrowserWindowConstructorOptions;
+        })
+      | undefined;
+    const contents = {
+      id: 42,
+      setBackgroundThrottling: vi.fn(),
+      setWindowOpenHandler: vi.fn((handler) => {
+        openHandler = handler;
+      }),
+      on: vi.fn(),
+      once: vi.fn(),
+      isDestroyed: vi.fn(() => false),
+      navigationHistory: {
+        canGoBack: vi.fn(() => false),
+        goBack: vi.fn(),
+      },
+    };
+    new BrowserSessionManager().configureContents(contents as never);
+
+    for (const disposition of ["default", "foreground-tab", "new-window"]) {
+      const response = openHandler?.({
+        url: "https://cas.example.com/login",
+        disposition,
+      });
+      expect(response?.action).toBe("allow");
+      expect(response?.overrideBrowserWindowOptions?.webPreferences?.partition).toBe(
+        BROWSER_PARTITION
+      );
+      expect(typeof (response as { createWindow?: unknown })?.createWindow).toBe("function");
     }
   });
 });

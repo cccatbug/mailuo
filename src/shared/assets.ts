@@ -23,5 +23,18 @@ export interface AssetReference {
   size: number;
 }
 
-export const assetHref = (id: string) => `mailuo-asset:${id}`;
+export interface AssetTagRecord {
+  id: string;
+  name: string;
+  color: string;
+}
 
+export interface AssetLibrarySnapshot {
+  assets: AssetRecord[];
+  folders: string[];
+  tags: AssetTagRecord[];
+}
+
+export type AssetTagMode = "add" | "remove" | "set";
+
+export const assetHref = (id: string) => `mailuo-asset:${id}`;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Eye,
   FileQuestion,
@@ -29,6 +29,8 @@ export function FileEditor({
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const contentRef = useRef<string | null>(null);
+  const dirtyRef = useRef(false);
   const [preview, setPreview] = useState(
     /\.(?:md|html?)$/i.test(path) ||
       mimeType === "text/markdown" ||
@@ -83,7 +85,10 @@ export function FileEditor({
       ?.then((value) => {
         if (cancelled) return;
         if (isImage || isMedia) setImageUrl(value);
-        else setContent(value);
+        else {
+          contentRef.current = value;
+          setContent(value);
+        }
       })
       .catch((e) => {
         if (!cancelled) {
@@ -103,6 +108,7 @@ export function FileEditor({
     try {
       await bridge?.writeFile(path, content);
       setDirty(false);
+      dirtyRef.current = false;
       toast.success("已保存");
     } catch (e) {
       toast.error("保存失败", { description: String(e) });
@@ -110,6 +116,26 @@ export function FileEditor({
       setSaving(false);
     }
   };
+
+  useEffect(() => {
+    if (!dirty) return;
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, [dirty]);
+
+  useEffect(() => {
+    return () => {
+      // Dockview 没有可取消的 before-close 钩子；关闭文件标签时把最后一次文本
+      // 修改直接落盘，避免用户因关闭标签丢失内容。窗口退出仍由 beforeunload 拦截。
+      if (dirtyRef.current && contentRef.current !== null) {
+        void bridge?.writeFile(path, contentRef.current);
+      }
+    };
+  }, [path]);
 
   if (((isImage || isMedia) && imageUrl === null) || (!isImage && !isMedia && content === null)) {
     return (
@@ -226,6 +252,8 @@ export function FileEditor({
             !isMd && "font-mono text-xs"
           )}
           onChange={(e) => {
+            contentRef.current = e.target.value;
+            dirtyRef.current = true;
             setContent(e.target.value);
             setDirty(true);
           }}

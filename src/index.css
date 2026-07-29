@@ -242,6 +242,37 @@
   border-radius: 6px 6px 0 0;
 }
 
+/* 项目文件管理器：面板越窄，逐级收起次要信息，始终不横向溢出。 */
+.asset-manager {
+  container-type: inline-size;
+}
+@container (max-width: 680px) {
+  .asset-sidebar {
+    width: 148px;
+  }
+  .asset-columns,
+  .asset-row {
+    grid-template-columns: minmax(130px, 1fr) minmax(72px, 120px) 84px !important;
+  }
+  .asset-columns > :last-child,
+  .asset-row > :last-child {
+    display: none;
+  }
+}
+@container (max-width: 520px) {
+  .asset-sidebar {
+    display: none;
+  }
+  .asset-columns,
+  .asset-row {
+    grid-template-columns: minmax(130px, 1fr) minmax(70px, 110px) !important;
+  }
+  .asset-columns > :nth-child(3),
+  .asset-row > :nth-child(3) {
+    display: none;
+  }
+}
+
 /* xyflow 主题对齐 */
 .react-flow {
   --xy-background-color: transparent;

@@ -16,7 +16,12 @@ import type {
   RouteResolutionStatus,
 } from "../src/shared/ai-config";
 import type { OneShotUseCase } from "../src/shared/ai-prompts";
-import type { AssetRecord } from "../src/shared/assets";
+import type {
+  AssetLibrarySnapshot,
+  AssetRecord,
+  AssetTagMode,
+  AssetTagRecord,
+} from "../src/shared/assets";
 
 const api = {
   platform: process.platform as NodeJS.Platform,
@@ -172,6 +177,41 @@ const api = {
     ipcRenderer.invoke("assets:create-folder", projectId, relativePath),
   moveAsset: (projectId: string, assetId: string, folder: string): Promise<AssetRecord> =>
     ipcRenderer.invoke("assets:move", projectId, assetId, folder),
+  listAssetLibrary: (projectId: string): Promise<AssetLibrarySnapshot> =>
+    ipcRenderer.invoke("assets:library", projectId),
+  createAssetFile: (projectId: string, folder: string, name: string, content = ""): Promise<AssetRecord> =>
+    ipcRenderer.invoke("assets:create-file", projectId, folder, name, content),
+  renameAssetFolder: (projectId: string, relativePath: string, name: string): Promise<void> =>
+    ipcRenderer.invoke("assets:rename-folder", projectId, relativePath, name),
+  moveAssetFolder: (projectId: string, relativePath: string, destination: string): Promise<void> =>
+    ipcRenderer.invoke("assets:move-folder", projectId, relativePath, destination),
+  duplicateAsset: (projectId: string, assetId: string): Promise<void> =>
+    ipcRenderer.invoke("assets:duplicate", projectId, assetId),
+  copyAsset: (projectId: string, assetId: string, destination: string): Promise<void> =>
+    ipcRenderer.invoke("assets:copy", projectId, assetId, destination),
+  duplicateAssetFolder: (projectId: string, relativePath: string): Promise<void> =>
+    ipcRenderer.invoke("assets:duplicate-folder", projectId, relativePath),
+  trashAssetFolder: (projectId: string, relativePath: string): Promise<void> =>
+    ipcRenderer.invoke("assets:trash-folder", projectId, relativePath),
+  permanentlyDeleteAsset: (projectId: string, assetId: string): Promise<void> =>
+    ipcRenderer.invoke("assets:delete-permanently", projectId, assetId),
+  createAssetTag: (projectId: string, name: string, color: string): Promise<AssetTagRecord> =>
+    ipcRenderer.invoke("assets:tag-create", projectId, name, color),
+  updateAssetTag: (
+    projectId: string,
+    tagId: string,
+    patch: { name?: string; color?: string }
+  ): Promise<AssetTagRecord> =>
+    ipcRenderer.invoke("assets:tag-update", projectId, tagId, patch),
+  deleteAssetTag: (projectId: string, tagId: string): Promise<void> =>
+    ipcRenderer.invoke("assets:tag-delete", projectId, tagId),
+  assignAssetTags: (
+    projectId: string,
+    assetIds: string[],
+    tagNames: string[],
+    mode: AssetTagMode
+  ): Promise<void> =>
+    ipcRenderer.invoke("assets:tags-assign", projectId, assetIds, tagNames, mode),
 
   onAssistantEvent: (
     handler: (requestId: string, event: AssistantEventPayload) => void

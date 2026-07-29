@@ -24,6 +24,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { shouldLoadBrowserAddress } from "./browser-navigation";
 
 interface MailuoWebview extends HTMLElement {
   src: string;
@@ -64,8 +65,12 @@ const EXTRACT_SCRIPT = `(() => {
 
 export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
   const webviewRef = useRef<MailuoWebview | null>(null);
-  const [url, setUrl] = useState(normalizeAddress(initialUrl ?? "https://www.google.com"));
-  const [address, setAddress] = useState(url);
+  // webview 的 src 只能用于首次导航。把网页自身导航写回 src 会触发重载，
+  // 从而打断 CAS/OAuth 的 302、POST 和 window.opener 回跳链。
+  const initialUrlRef = useRef(normalizeAddress(initialUrl ?? "https://www.google.com"));
+  const currentUrlRef = useRef(initialUrlRef.current);
+  const [currentUrl, setCurrentUrl] = useState(initialUrlRef.current);
+  const [address, setAddress] = useState(initialUrlRef.current);
   const [loading, setLoading] = useState(true);
   const [canBack, setCanBack] = useState(false);
   const [canForward, setCanForward] = useState(false);
@@ -78,10 +83,20 @@ export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
     const view = webviewRef.current;
     if (!view) return;
     const sync = (event?: Event) => {
-      const detailUrl = (event as CustomEvent<{ url?: string }>)?.detail?.url;
-      const next = detailUrl || view.getURL?.() || url;
+      const navigationEvent = event as Event & {
+        url?: string;
+        detail?: { url?: string };
+        isMainFrame?: boolean;
+      };
+      if (navigationEvent?.isMainFrame === false) return;
+      const next =
+        navigationEvent?.url ||
+        navigationEvent?.detail?.url ||
+        view.getURL?.() ||
+        currentUrlRef.current;
+      currentUrlRef.current = next;
       setAddress(next);
-      setUrl(next);
+      setCurrentUrl(next);
       setCanBack(view.canGoBack?.() ?? false);
       setCanForward(view.canGoForward?.() ?? false);
     };
@@ -108,21 +123,28 @@ export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
     view.addEventListener("did-stop-loading", stop);
     view.addEventListener("did-navigate", sync);
     view.addEventListener("did-navigate-in-page", sync);
+    view.addEventListener("did-redirect-navigation", sync);
     view.addEventListener("did-fail-load", failed);
     return () => {
       view.removeEventListener("did-start-loading", start);
       view.removeEventListener("did-stop-loading", stop);
       view.removeEventListener("did-navigate", sync);
       view.removeEventListener("did-navigate-in-page", sync);
+      view.removeEventListener("did-redirect-navigation", sync);
       view.removeEventListener("did-fail-load", failed);
     };
-  }, [url]);
+  }, []);
 
   const navigate = () => {
     const next = normalizeAddress(address);
-    setUrl(next);
+    const view = webviewRef.current;
+    const live = view?.getURL?.() || currentUrlRef.current || null;
+    const declared = view?.getAttribute?.("src") ?? null;
+    if (!shouldLoadBrowserAddress(next, live, declared)) return;
+    currentUrlRef.current = next;
+    setCurrentUrl(next);
     setAddress(next);
-    void webviewRef.current?.loadURL(next);
+    void view?.loadURL(next);
   };
 
   const askShu = async (preset?: string) => {
@@ -193,7 +215,7 @@ export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
           />
           <Search className="pointer-events-none absolute top-1/2 right-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
         </form>
-        <Button variant="ghost" size="icon-sm" title="在系统浏览器打开" onClick={() => bridge?.openExternal(url)}>
+        <Button variant="ghost" size="icon-sm" title="在系统浏览器打开" onClick={() => bridge?.openExternal(currentUrl)}>
           <ExternalLink />
         </Button>
         <DropdownMenu>
@@ -241,7 +263,8 @@ export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
         ref: (node: MailuoWebview | null) => {
           webviewRef.current = node;
         },
-        src: url,
+        // 保持声明值稳定；后续导航一律由 Chromium 或显式 loadURL 驱动。
+        src: initialUrlRef.current,
         partition: "persist:mailuo-browser",
         allowpopups: "true",
         className: "min-h-0 flex-1 bg-white",

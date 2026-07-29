@@ -2,14 +2,28 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { MAILUO_HOME, workspaceDir } from "./pi";
-import type { AssetRecord, AssetSource } from "../src/shared/assets";
+import type {
+  AssetLibrarySnapshot,
+  AssetRecord,
+  AssetSource,
+  AssetTagMode,
+  AssetTagRecord,
+} from "../src/shared/assets";
 
 const INDEX_PATH = path.join(MAILUO_HOME, "assets.json");
 
 interface AssetIndex {
+  version: 2;
+  assets: AssetRecord[];
+  tags: Record<string, AssetTagRecord[]>;
+}
+
+interface LegacyAssetIndex {
   version: 1;
   assets: AssetRecord[];
 }
+
+const TAG_COLORS = ["#ef4444", "#f59e0b", "#22c55e", "#06b6d4", "#3b82f6", "#8b5cf6", "#ec4899"];
 
 const MIME: Record<string, string> = {
   svg: "image/svg+xml", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
@@ -28,12 +42,29 @@ export function inferMime(name: string): string {
 
 async function readIndex(): Promise<AssetIndex> {
   try {
-    const parsed = JSON.parse(await fs.readFile(INDEX_PATH, "utf8")) as AssetIndex;
-    return parsed.version === 1 && Array.isArray(parsed.assets)
-      ? parsed
-      : { version: 1, assets: [] };
+    const parsed = JSON.parse(await fs.readFile(INDEX_PATH, "utf8")) as AssetIndex | LegacyAssetIndex;
+    if (parsed.version === 2 && Array.isArray(parsed.assets)) {
+      return { ...parsed, tags: parsed.tags && typeof parsed.tags === "object" ? parsed.tags : {} };
+    }
+    if (parsed.version === 1 && Array.isArray(parsed.assets)) {
+      const tags: Record<string, AssetTagRecord[]> = {};
+      for (const asset of parsed.assets) {
+        const projectTags = (tags[asset.projectId] ??= []);
+        for (const name of asset.tags ?? []) {
+          if (!projectTags.some((tag) => tag.name === name)) {
+            projectTags.push({
+              id: crypto.randomUUID(),
+              name,
+              color: TAG_COLORS[projectTags.length % TAG_COLORS.length],
+            });
+          }
+        }
+      }
+      return { version: 2, assets: parsed.assets, tags };
+    }
+    return { version: 2, assets: [], tags: {} };
   } catch {
-    return { version: 1, assets: [] };
+    return { version: 2, assets: [], tags: {} };
   }
 }
 
@@ -53,6 +84,56 @@ function inProject(projectId: string, relativePath: string): string {
   const resolved = path.resolve(root, relativePath);
   if (!resolved.startsWith(root + path.sep)) throw new Error("资产路径越界");
   return resolved;
+}
+
+function normalizeRelative(relativePath: string, allowRoot = true): string {
+  const normalized = relativePath.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  if (!normalized && allowRoot) return "";
+  if (
+    !normalized ||
+    normalized.split("/").some((part) => !part || part === "." || part === "..")
+  ) {
+    throw new Error("路径无效");
+  }
+  return path.normalize(normalized);
+}
+
+function safeEntryName(name: string): string {
+  const value = name.trim();
+  if (
+    !value ||
+    value === "." ||
+    value === ".." ||
+    path.basename(value) !== value ||
+    /[/\\\u0000-\u001f]/.test(value)
+  ) {
+    throw new Error("名称无效");
+  }
+  return value;
+}
+
+async function pathExists(target: string): Promise<boolean> {
+  try {
+    await fs.access(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function uniqueRelativePath(
+  projectId: string,
+  parent: string,
+  requestedName: string
+): Promise<string> {
+  const parsed = path.parse(requestedName);
+  for (let index = 1; index < 10_000; index += 1) {
+    const suffix = index === 1 ? " 副本" : ` 副本 ${index}`;
+    const name = `${parsed.name}${suffix}${parsed.ext}`;
+    const relative = path.join(parent, name);
+    if (!(await pathExists(inProject(projectId, relative)))) return relative;
+  }
+  throw new Error("无法生成可用的副本名称");
 }
 
 async function walk(root: string, relative = ""): Promise<string[]> {
@@ -117,6 +198,36 @@ export async function listProjectAssets(projectId: string): Promise<AssetRecord[
   ];
   await writeIndex(index);
   return [...fresh, ...trashed].sort((a, b) => b.modifiedAt - a.modifiedAt);
+}
+
+export async function listAssetTags(projectId: string): Promise<AssetTagRecord[]> {
+  const index = await readIndex();
+  const tags = (index.tags[projectId] ??= []);
+  const names = new Set(tags.map((tag) => tag.name));
+  for (const asset of index.assets.filter((entry) => entry.projectId === projectId)) {
+    for (const name of asset.tags) {
+      if (!names.has(name)) {
+        tags.push({
+          id: crypto.randomUUID(),
+          name,
+          color: TAG_COLORS[tags.length % TAG_COLORS.length],
+        });
+        names.add(name);
+      }
+    }
+  }
+  await writeIndex(index);
+  return [...tags].sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+}
+
+export async function listAssetLibrary(projectId: string): Promise<AssetLibrarySnapshot> {
+  // 先同步磁盘索引，再并行读取派生视图，避免两个 read-modify-write 覆盖彼此。
+  const assets = await listProjectAssets(projectId);
+  const [folders, tags] = await Promise.all([
+    listProjectFolders(projectId),
+    listAssetTags(projectId),
+  ]);
+  return { assets, folders, tags };
 }
 
 export async function resolveAsset(projectId: string, assetId: string): Promise<{
@@ -234,10 +345,7 @@ export async function listProjectFolders(projectId: string): Promise<string[]> {
 }
 
 export async function createProjectFolder(projectId: string, relativePath: string): Promise<void> {
-  const clean = relativePath.trim().replace(/^[/\\]+|[/\\]+$/g, "");
-  if (!clean || clean.split(/[/\\]/).some((part) => !part || part === "." || part === "..")) {
-    throw new Error("文件夹名称无效");
-  }
+  const clean = normalizeRelative(relativePath, false);
   await fs.mkdir(inProject(projectId, clean), { recursive: true });
 }
 
@@ -246,6 +354,7 @@ export async function moveAsset(projectId: string, assetId: string, folder: stri
   const asset = index.assets.find((entry) => entry.projectId === projectId && entry.id === assetId);
   if (!asset || asset.trashed) throw new Error("资产不存在");
   const nextRelative = path.join(folder, asset.name);
+  if (path.normalize(nextRelative) === path.normalize(asset.relativePath)) return asset;
   await fs.mkdir(path.dirname(inProject(projectId, nextRelative)), { recursive: true });
   try {
     await fs.access(inProject(projectId, nextRelative));
@@ -257,4 +366,224 @@ export async function moveAsset(projectId: string, assetId: string, folder: stri
   asset.relativePath = nextRelative;
   await writeIndex(index);
   return asset;
+}
+
+export async function createProjectFile(
+  projectId: string,
+  folder: string,
+  name: string,
+  content = ""
+): Promise<AssetRecord> {
+  const parent = normalizeRelative(folder);
+  const safeName = safeEntryName(name);
+  const relativePath = path.join(parent, safeName);
+  const target = inProject(projectId, relativePath);
+  if (await pathExists(target)) throw new Error("已有同名文件或文件夹");
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  await fs.writeFile(target, content, "utf8");
+  const assets = await listProjectAssets(projectId);
+  const asset = assets.find((entry) => entry.relativePath === relativePath);
+  if (!asset) throw new Error("文件创建后未能加入索引");
+  return asset;
+}
+
+export async function renameProjectFolder(
+  projectId: string,
+  relativePath: string,
+  name: string
+): Promise<void> {
+  const current = normalizeRelative(relativePath, false);
+  const safeName = safeEntryName(name);
+  const next = path.join(path.dirname(current), safeName);
+  if (current === next) return;
+  if (await pathExists(inProject(projectId, next))) throw new Error("已有同名文件或文件夹");
+  await listProjectAssets(projectId);
+  await fs.rename(inProject(projectId, current), inProject(projectId, next));
+  const index = await readIndex();
+  const prefix = `${current}${path.sep}`;
+  for (const asset of index.assets) {
+    if (asset.projectId === projectId && !asset.trashed && asset.relativePath.startsWith(prefix)) {
+      asset.relativePath = path.join(next, asset.relativePath.slice(prefix.length));
+    }
+  }
+  await writeIndex(index);
+}
+
+export async function moveProjectFolder(
+  projectId: string,
+  relativePath: string,
+  destinationFolder: string
+): Promise<void> {
+  const current = normalizeRelative(relativePath, false);
+  const destination = normalizeRelative(destinationFolder);
+  if (destination === current || destination.startsWith(`${current}${path.sep}`)) {
+    throw new Error("不能把文件夹移动到自身或其子文件夹");
+  }
+  const next = path.join(destination, path.basename(current));
+  if (await pathExists(inProject(projectId, next))) throw new Error("目标位置已有同名项目");
+  if (destination) {
+    await fs.mkdir(inProject(projectId, destination), { recursive: true });
+  }
+  await listProjectAssets(projectId);
+  await fs.rename(inProject(projectId, current), inProject(projectId, next));
+  const index = await readIndex();
+  const prefix = `${current}${path.sep}`;
+  for (const asset of index.assets) {
+    if (asset.projectId === projectId && !asset.trashed && asset.relativePath.startsWith(prefix)) {
+      asset.relativePath = path.join(next, asset.relativePath.slice(prefix.length));
+    }
+  }
+  await writeIndex(index);
+}
+
+export async function duplicateAsset(projectId: string, assetId: string): Promise<void> {
+  const { asset } = await resolveAsset(projectId, assetId);
+  const parent = path.dirname(asset.relativePath);
+  await copyAsset(projectId, assetId, parent === "." ? "" : parent);
+}
+
+export async function copyAsset(
+  projectId: string,
+  assetId: string,
+  destinationFolder: string
+): Promise<void> {
+  const { asset } = await resolveAsset(projectId, assetId);
+  const destination = normalizeRelative(destinationFolder);
+  const target = await uniqueRelativePath(projectId, destination, asset.name);
+  if (destination) await fs.mkdir(inProject(projectId, destination), { recursive: true });
+  await fs.copyFile(inProject(projectId, asset.relativePath), inProject(projectId, target));
+  await listProjectAssets(projectId);
+}
+
+export async function duplicateProjectFolder(
+  projectId: string,
+  relativePath: string
+): Promise<void> {
+  const current = normalizeRelative(relativePath, false);
+  const parent = path.dirname(current);
+  const target = await uniqueRelativePath(
+    projectId,
+    parent === "." ? "" : parent,
+    path.basename(current)
+  );
+  await fs.cp(inProject(projectId, current), inProject(projectId, target), {
+    recursive: true,
+    errorOnExist: true,
+  });
+  await listProjectAssets(projectId);
+}
+
+export async function trashProjectFolder(
+  projectId: string,
+  relativePath: string
+): Promise<void> {
+  const folder = normalizeRelative(relativePath, false);
+  await listProjectAssets(projectId);
+  const index = await readIndex();
+  const prefix = `${folder}${path.sep}`;
+  const assets = index.assets.filter(
+    (asset) =>
+      asset.projectId === projectId &&
+      !asset.trashed &&
+      asset.relativePath.startsWith(prefix)
+  );
+  const trashRoot = inProject(projectId, ".trash");
+  await fs.mkdir(trashRoot, { recursive: true });
+  for (const asset of assets) {
+    await fs.rename(
+      inProject(projectId, asset.relativePath),
+      inProject(projectId, path.join(".trash", `${asset.id}-${asset.name}`))
+    );
+    asset.trashed = true;
+  }
+  await fs.rm(inProject(projectId, folder), { recursive: true, force: true });
+  await writeIndex(index);
+}
+
+export async function permanentlyDeleteAsset(
+  projectId: string,
+  assetId: string
+): Promise<void> {
+  const index = await readIndex();
+  const asset = index.assets.find(
+    (entry) => entry.projectId === projectId && entry.id === assetId && entry.trashed
+  );
+  if (!asset) throw new Error("回收站中没有此资产");
+  await fs.rm(inProject(projectId, path.join(".trash", `${asset.id}-${asset.name}`)), {
+    force: true,
+  });
+  index.assets = index.assets.filter((entry) => entry !== asset);
+  await writeIndex(index);
+}
+
+export async function createAssetTag(
+  projectId: string,
+  name: string,
+  color: string
+): Promise<AssetTagRecord> {
+  const safeName = safeEntryName(name);
+  const index = await readIndex();
+  const tags = (index.tags[projectId] ??= []);
+  if (tags.some((tag) => tag.name.toLocaleLowerCase() === safeName.toLocaleLowerCase())) {
+    throw new Error("标签已存在");
+  }
+  const tag = { id: crypto.randomUUID(), name: safeName, color };
+  tags.push(tag);
+  await writeIndex(index);
+  return tag;
+}
+
+export async function updateAssetTag(
+  projectId: string,
+  tagId: string,
+  patch: { name?: string; color?: string }
+): Promise<AssetTagRecord> {
+  const index = await readIndex();
+  const tags = (index.tags[projectId] ??= []);
+  const tag = tags.find((entry) => entry.id === tagId);
+  if (!tag) throw new Error("标签不存在");
+  if (patch.name && patch.name !== tag.name) {
+    const nextName = safeEntryName(patch.name);
+    if (tags.some((entry) => entry.id !== tagId && entry.name.toLocaleLowerCase() === nextName.toLocaleLowerCase())) {
+      throw new Error("标签已存在");
+    }
+    const previous = tag.name;
+    tag.name = nextName;
+    for (const asset of index.assets.filter((entry) => entry.projectId === projectId)) {
+      asset.tags = asset.tags.map((name) => (name === previous ? nextName : name));
+    }
+  }
+  if (patch.color) tag.color = patch.color;
+  await writeIndex(index);
+  return tag;
+}
+
+export async function deleteAssetTag(projectId: string, tagId: string): Promise<void> {
+  const index = await readIndex();
+  const tags = (index.tags[projectId] ??= []);
+  const tag = tags.find((entry) => entry.id === tagId);
+  if (!tag) return;
+  index.tags[projectId] = tags.filter((entry) => entry.id !== tagId);
+  for (const asset of index.assets.filter((entry) => entry.projectId === projectId)) {
+    asset.tags = asset.tags.filter((name) => name !== tag.name);
+  }
+  await writeIndex(index);
+}
+
+export async function assignAssetTags(
+  projectId: string,
+  assetIds: string[],
+  tagNames: string[],
+  mode: AssetTagMode
+): Promise<void> {
+  const index = await readIndex();
+  const selected = new Set(assetIds);
+  const requested = [...new Set(tagNames.map((name) => name.trim()).filter(Boolean))];
+  for (const asset of index.assets) {
+    if (asset.projectId !== projectId || !selected.has(asset.id)) continue;
+    if (mode === "set") asset.tags = requested;
+    else if (mode === "add") asset.tags = [...new Set([...asset.tags, ...requested])];
+    else asset.tags = asset.tags.filter((name) => !requested.includes(name));
+  }
+  await writeIndex(index);
 }

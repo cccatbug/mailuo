@@ -52,8 +52,21 @@ import {
   trashAsset,
   updateAsset,
   createProjectFolder,
+  createProjectFile,
+  createAssetTag,
+  updateAssetTag,
+  deleteAssetTag,
+  assignAssetTags,
+  copyAsset,
+  duplicateAsset,
+  duplicateProjectFolder,
+  listAssetLibrary,
   listProjectFolders,
   moveAsset,
+  moveProjectFolder,
+  permanentlyDeleteAsset,
+  renameProjectFolder,
+  trashProjectFolder,
 } from "./asset-store";
 import {
   BROWSER_PARTITION,
@@ -232,6 +245,70 @@ function registerIpc() {
   );
   ipcMain.handle("assets:move", (_e, projectId: string, assetId: string, folder: string) =>
     moveAsset(projectId, assetId, folder)
+  );
+  ipcMain.handle("assets:library", (_e, projectId: string) =>
+    listAssetLibrary(projectId)
+  );
+  ipcMain.handle(
+    "assets:create-file",
+    (_e, projectId: string, folder: string, name: string, content?: string) =>
+      createProjectFile(projectId, folder, name, content)
+  );
+  ipcMain.handle(
+    "assets:rename-folder",
+    (_e, projectId: string, relativePath: string, name: string) =>
+      renameProjectFolder(projectId, relativePath, name)
+  );
+  ipcMain.handle(
+    "assets:move-folder",
+    (_e, projectId: string, relativePath: string, destination: string) =>
+      moveProjectFolder(projectId, relativePath, destination)
+  );
+  ipcMain.handle("assets:duplicate", (_e, projectId: string, assetId: string) =>
+    duplicateAsset(projectId, assetId)
+  );
+  ipcMain.handle(
+    "assets:copy",
+    (_e, projectId: string, assetId: string, destination: string) =>
+      copyAsset(projectId, assetId, destination)
+  );
+  ipcMain.handle(
+    "assets:duplicate-folder",
+    (_e, projectId: string, relativePath: string) =>
+      duplicateProjectFolder(projectId, relativePath)
+  );
+  ipcMain.handle(
+    "assets:trash-folder",
+    (_e, projectId: string, relativePath: string) =>
+      trashProjectFolder(projectId, relativePath)
+  );
+  ipcMain.handle(
+    "assets:delete-permanently",
+    (_e, projectId: string, assetId: string) =>
+      permanentlyDeleteAsset(projectId, assetId)
+  );
+  ipcMain.handle(
+    "assets:tag-create",
+    (_e, projectId: string, name: string, color: string) =>
+      createAssetTag(projectId, name, color)
+  );
+  ipcMain.handle(
+    "assets:tag-update",
+    (_e, projectId: string, tagId: string, patch: { name?: string; color?: string }) =>
+      updateAssetTag(projectId, tagId, patch)
+  );
+  ipcMain.handle("assets:tag-delete", (_e, projectId: string, tagId: string) =>
+    deleteAssetTag(projectId, tagId)
+  );
+  ipcMain.handle(
+    "assets:tags-assign",
+    (
+      _e,
+      projectId: string,
+      assetIds: string[],
+      tagNames: string[],
+      mode: "add" | "remove" | "set"
+    ) => assignAssetTags(projectId, assetIds, tagNames, mode)
   );
   ipcMain.handle("browser:session:snapshot", () => BROWSER_SESSION.snapshot());
   ipcMain.handle("browser:session:flush", () => BROWSER_SESSION.flush());
