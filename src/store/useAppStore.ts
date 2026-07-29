@@ -9,9 +9,18 @@ import {
 } from "@/lib/quadrant";
 import { loadPersisted, schedulePersist } from "@/lib/persist";
 import { seedData } from "./seed";
+import {
+  migrateThemePreference,
+  resolveThemeMode,
+  type Theme,
+  type ThemeMode,
+  type ThemePalette,
+} from "@/lib/theme";
+import type { BrowserAgentMode } from "@/shared/browser";
 
 export type ViewMode = "list" | "graph" | "stats" | "matrix";
-export type Theme = "light" | "dark";
+export type { Theme, ThemeMode, ThemePalette } from "@/lib/theme";
+export type Locale = "zh-CN" | "en";
 export type GraphDirection = "LR" | "TB";
 export type StatusFilter = "all" | "todo" | "doing" | "done" | "blocked";
 
@@ -22,6 +31,8 @@ export interface AppSettings {
   fontBody: "sans" | "serif";
   /** 标题字体 */
   fontHeading: "serif" | "sans";
+  locale: Locale;
+  browserAgentMode: BrowserAgentMode;
 }
 
 const FONT_STACKS = {
@@ -62,6 +73,8 @@ interface AppStore {
   selectedTaskId: string | null;
   view: ViewMode;
   theme: Theme;
+  themeMode: ThemeMode;
+  themePalette: ThemePalette;
   graphDirection: GraphDirection;
   search: string;
   statusFilter: StatusFilter;
@@ -78,6 +91,8 @@ interface AppStore {
   init: () => Promise<void>;
   setView: (v: ViewMode) => void;
   setTheme: (t: Theme) => void;
+  setThemeMode: (mode: ThemeMode) => void;
+  setThemePalette: (palette: ThemePalette) => void;
   setGraphDirection: (d: GraphDirection) => void;
   setSearch: (q: string) => void;
   setStatusFilter: (f: StatusFilter) => void;
@@ -124,6 +139,8 @@ interface AppStore {
 
 const uid = () => crypto.randomUUID();
 const THEME_KEY = "mailuo-theme";
+const THEME_MODE_KEY = "mailuo-theme-mode";
+const THEME_PALETTE_KEY = "mailuo-theme-palette";
 const SETTINGS_KEY = "mailuo-settings";
 const PANELS_KEY = "mailuo-panels";
 
@@ -140,6 +157,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   uiScale: 1,
   fontBody: "sans",
   fontHeading: "serif",
+  locale: "zh-CN",
+  browserAgentMode: "confirm-sensitive",
 };
 
 function loadSettings(): AppSettings {
@@ -152,15 +171,21 @@ function loadSettings(): AppSettings {
         typeof stored.uiScale === "number" ? stored.uiScale : DEFAULT_SETTINGS.uiScale,
       fontBody: stored.fontBody === "serif" ? "serif" : "sans",
       fontHeading: stored.fontHeading === "sans" ? "sans" : "serif",
+      locale: stored.locale === "en" ? "en" : "zh-CN",
+      browserAgentMode:
+        stored.browserAgentMode === "always-allow" ||
+        stored.browserAgentMode === "read-only"
+          ? stored.browserAgentMode
+          : "confirm-sensitive",
     };
   } catch {
     return DEFAULT_SETTINGS;
   }
 }
 
-function applyTheme(theme: Theme) {
+function applyTheme(theme: Theme, palette: ThemePalette) {
   document.documentElement.classList.toggle("dark", theme === "dark");
-  localStorage.setItem(THEME_KEY, theme);
+  document.documentElement.dataset.themePalette = palette;
 }
 
 export const useAppStore = create<AppStore>((set, get) => {
@@ -179,6 +204,8 @@ export const useAppStore = create<AppStore>((set, get) => {
     selectedTaskId: null,
     view: "list",
     theme: "light",
+    themeMode: "system",
+    themePalette: "paper",
     graphDirection: "LR",
     search: "",
     statusFilter: "all",
@@ -194,13 +221,23 @@ export const useAppStore = create<AppStore>((set, get) => {
     panelRight: loadPanels().right,
 
     init: async () => {
-      const theme =
-        (localStorage.getItem(THEME_KEY) as Theme | null) ??
-        (window.matchMedia("(prefers-color-scheme: dark)").matches
-          ? "dark"
-          : "light");
-      applyTheme(theme);
-      applyAppearance(loadSettings());
+      const media = window.matchMedia("(prefers-color-scheme: dark)");
+      const preference = migrateThemePreference(
+        localStorage.getItem(THEME_KEY),
+        localStorage.getItem(THEME_MODE_KEY),
+        localStorage.getItem(THEME_PALETTE_KEY)
+      );
+      const theme = resolveThemeMode(preference.mode, media.matches);
+      applyTheme(theme, preference.palette);
+      const settings = loadSettings();
+      applyAppearance(settings);
+      media.addEventListener("change", (event) => {
+        const state = get();
+        if (state.themeMode !== "system") return;
+        const resolved = resolveThemeMode("system", event.matches);
+        applyTheme(resolved, state.themePalette);
+        set({ theme: resolved });
+      });
 
       let data = await loadPersisted();
       const fresh = data === null;
@@ -216,7 +253,9 @@ export const useAppStore = create<AppStore>((set, get) => {
       set({
         loaded: true,
         theme,
-        settings: loadSettings(),
+        themeMode: preference.mode,
+        themePalette: preference.palette,
+        settings,
         projects: data.projects,
         tasks: data.tasks,
         tagLibrary,
@@ -228,8 +267,24 @@ export const useAppStore = create<AppStore>((set, get) => {
 
     setView: (view) => set({ view }),
     setTheme: (theme) => {
-      applyTheme(theme);
-      set({ theme });
+      localStorage.setItem(THEME_MODE_KEY, theme);
+      localStorage.setItem(THEME_KEY, theme);
+      applyTheme(theme, get().themePalette);
+      set({ theme, themeMode: theme });
+    },
+    setThemeMode: (themeMode) => {
+      localStorage.setItem(THEME_MODE_KEY, themeMode);
+      const theme = resolveThemeMode(
+        themeMode,
+        window.matchMedia("(prefers-color-scheme: dark)").matches
+      );
+      applyTheme(theme, get().themePalette);
+      set({ theme, themeMode });
+    },
+    setThemePalette: (themePalette) => {
+      localStorage.setItem(THEME_PALETTE_KEY, themePalette);
+      applyTheme(get().theme, themePalette);
+      set({ themePalette });
     },
     setGraphDirection: (graphDirection) => set({ graphDirection }),
     setSearch: (search) => set({ search }),

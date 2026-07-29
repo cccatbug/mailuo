@@ -32,6 +32,7 @@ import { useAppStore } from "@/store/useAppStore";
 import { isBlocked, wouldCreateCycle } from "@/lib/deps";
 import type { Task } from "@/types";
 import { TaskNode, type TaskNodeType } from "./TaskNode";
+import { assignTaskColorSlots } from "./node-colors";
 import { layoutWithDagre } from "./layout";
 
 const nodeTypes = { task: TaskNode };
@@ -48,6 +49,7 @@ function buildGraph(
       .map((d) => ({ source: d, target: t.id }))
   );
   const pos = layoutWithDagre(tasks, edgeList, direction);
+  const colorSlots = assignTaskColorSlots(tasks);
 
   const nodes: TaskNodeType[] = tasks.map((t) => ({
     id: t.id,
@@ -55,7 +57,12 @@ function buildGraph(
     position: pos.get(t.id)!,
     selected: t.id === selectedTaskId,
     deletable: false,
-    data: { task: t, blocked: isBlocked(t, byId), direction },
+    data: {
+      task: t,
+      blocked: isBlocked(t, byId),
+      direction,
+      colorSlot: colorSlots.get(t.id) ?? 0,
+    },
   }));
 
   const edges: Edge[] = edgeList.map(({ source, target }) => {
@@ -226,11 +233,10 @@ function Flow({ tasks }: { tasks: Task[] }) {
         zoomable
         position="bottom-right"
         nodeColor={(n) => {
-          const task = (n as TaskNodeType).data?.task;
-          if (!task) return "var(--muted)";
-          if (task.status === "done") return "var(--status-done)";
-          if (task.status === "doing") return "var(--status-doing)";
-          return "var(--muted-foreground)";
+          const slot = (n as TaskNodeType).data?.colorSlot;
+          return typeof slot === "number"
+            ? `var(--graph-node-${slot + 1})`
+            : "var(--muted)";
         }}
         maskColor="color-mix(in oklch, var(--background) 75%, transparent)"
         bgColor="var(--card)"

@@ -94,6 +94,17 @@ export const aiRequestContextSchema = z
     taskDetails: z.string().optional(),
     conversationHistory: z.string().optional(),
     skillNames: z.array(z.string()).optional(),
+    browserTabs: z
+      .array(
+        z
+          .object({
+            tabId: z.string(),
+            title: z.string(),
+            url: z.string(),
+          })
+          .strict()
+      )
+      .optional(),
   })
   .strict();
 
@@ -361,6 +372,7 @@ export interface AiRequestContext {
   taskDetails?: string;
   conversationHistory?: string;
   skillNames?: string[];
+  browserTabs?: { tabId: string; title: string; url: string }[];
 }
 
 export interface EnabledModelSummary {

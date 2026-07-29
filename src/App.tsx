@@ -10,6 +10,8 @@ import {
   relocateAssistant,
   focusOrOpenBrowser,
   openBrowserPanel,
+  focusBrowserPanel,
+  closeBrowserPanel,
 } from "@/components/DockLayout";
 import { ProjectSidebar } from "@/features/projects/ProjectSidebar";
 import { CommandPalette } from "@/features/command/CommandPalette";
@@ -19,6 +21,7 @@ import { bridge } from "@/lib/bridge";
 import { toast } from "sonner";
 import { isMac } from "@/lib/platform";
 import { cn } from "@/lib/utils";
+import i18n from "@/lib/i18n";
 
 /** Windows / Linux 自绘窗口控制（macOS 用红绿灯） */
 function WindowControls() {
@@ -93,10 +96,22 @@ export default function App() {
   const togglePanel = useAppStore((s) => s.togglePanel);
   const assistantMode = useAppStore((s) => s.assistantMode);
   const panelLeft = useAppStore((s) => s.panelLeft);
+  const locale = useAppStore((s) => s.settings.locale);
+  const browserAgentMode = useAppStore(
+    (s) => s.settings.browserAgentMode
+  );
 
   useEffect(() => {
     void init();
   }, [init]);
+
+  useEffect(() => {
+    void i18n.changeLanguage(locale);
+  }, [locale]);
+
+  useEffect(() => {
+    void bridge?.setBrowserAgentMode(browserAgentMode);
+  }, [browserAgentMode]);
 
   useEffect(() => {
     return bridge?.onBrowserDownload((event) => {
@@ -116,6 +131,25 @@ export default function App() {
   }, []);
 
   useEffect(() => bridge?.onBrowserOpenTab((url) => openBrowserPanel(url)), []);
+
+  useEffect(
+    () =>
+      bridge?.onBrowserTabCommand(async (command) => {
+        if (command.action === "open") {
+          const tabId = openBrowserPanel(command.url);
+          if (!tabId) throw new Error("工作区尚未准备好");
+          return { tabId };
+        }
+        if (!command.tabId) throw new Error("缺少浏览器标签页 ID");
+        const ok =
+          command.action === "focus"
+            ? focusBrowserPanel(command.tabId)
+            : closeBrowserPanel(command.tabId);
+        if (!ok) throw new Error("浏览器标签页不存在");
+        return { tabId: command.tabId };
+      }),
+    []
+  );
 
   // 原生窗口标题跟随当前项目与视图
   const projects = useAppStore((s) => s.projects);

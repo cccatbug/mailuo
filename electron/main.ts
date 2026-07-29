@@ -73,6 +73,14 @@ import {
   BROWSER_SESSION,
   isExternalBrowserProtocol,
 } from "./browser-session";
+import { BROWSER_RUNTIME } from "./browser-runtime";
+import type {
+  BrowserAgentMode,
+  BrowserApprovalResponse,
+  BrowserTabCommandResult,
+  BrowserTabRegistration,
+  BrowserTabUpdate,
+} from "../src/shared/browser";
 
 const isMac = process.platform === "darwin";
 
@@ -337,6 +345,56 @@ function registerIpc() {
     "browser:clear-data",
     (_event, scope: "cookies" | "all" = "all") => BROWSER_SESSION.clear(scope)
   );
+  ipcMain.handle("browser:tabs:list", () =>
+    BROWSER_RUNTIME.control.listTabs()
+  );
+  ipcMain.handle(
+    "browser:tabs:register",
+    (_event, registration: BrowserTabRegistration) =>
+      BROWSER_RUNTIME.registerTab(registration)
+  );
+  ipcMain.handle(
+    "browser:tabs:update",
+    (_event, tabId: string, update: BrowserTabUpdate) =>
+      BROWSER_RUNTIME.updateTab(tabId, update)
+  );
+  ipcMain.handle(
+    "browser:tabs:unregister",
+    (_event, tabId: string, webContentsId?: number) =>
+      BROWSER_RUNTIME.unregisterTab(tabId, webContentsId)
+  );
+  ipcMain.handle(
+    "browser:tabs:command",
+    (
+      _event,
+      command: {
+        action: "open" | "focus" | "close";
+        tabId?: string;
+        url?: string;
+      }
+    ) => BROWSER_RUNTIME.commandTab(command)
+  );
+  ipcMain.on(
+    "browser:tab-command-result",
+    (_event, result: BrowserTabCommandResult) =>
+      BROWSER_RUNTIME.settleTabCommand(result)
+  );
+  ipcMain.on(
+    "browser:approval-response",
+    (_event, response: BrowserApprovalResponse) =>
+      BROWSER_RUNTIME.settleApproval(response)
+  );
+  ipcMain.handle(
+    "browser:agent-mode",
+    (_event, mode: BrowserAgentMode) => {
+      if (
+        !["confirm-sensitive", "always-allow", "read-only"].includes(mode)
+      ) {
+        throw new Error("无效的浏览器 Agent 模式");
+      }
+      BROWSER_RUNTIME.setApprovalMode(mode);
+    }
+  );
 
   ipcMain.handle("agent:models", () => listModels());
   ipcMain.handle("agent:skills", () => listSkills());
@@ -515,7 +573,10 @@ function registerIpc() {
         }
       )
   );
-  ipcMain.handle("assistant:reset", () => assistantReset());
+  ipcMain.handle("assistant:reset", () => {
+    BROWSER_RUNTIME.cancelPending();
+    assistantReset();
+  });
 
   ipcMain.on("window:control", (e, action: string) => {
     const w = BrowserWindow.fromWebContents(e.sender);
@@ -544,6 +605,7 @@ if (!app.requestSingleInstanceLock()) {
   void app.whenReady().then(async () => {
     registerIpc();
     BROWSER_SESSION.initialize(() => win);
+    BROWSER_RUNTIME.initialize(() => win);
     createWindow();
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -551,12 +613,14 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on("window-all-closed", () => {
+    BROWSER_RUNTIME.cancelPending();
     assistantReset();
     if (!isMac) app.quit();
   });
 
   let browserDataFlushed = false;
   app.on("before-quit", (event) => {
+    BROWSER_RUNTIME.cancelPending();
     assistantReset();
     if (browserDataFlushed) return;
     event.preventDefault();

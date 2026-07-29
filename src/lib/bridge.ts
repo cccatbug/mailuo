@@ -21,6 +21,15 @@ import type {
   AssetTagMode,
   AssetTagRecord,
 } from "@/shared/assets";
+import type {
+  BrowserAgentMode,
+  BrowserApprovalRequest,
+  BrowserApprovalResponse,
+  BrowserTabCommand,
+  BrowserTabInfo,
+  BrowserTabRegistration,
+  BrowserTabUpdate,
+} from "@/shared/browser";
 
 export interface BrowserSessionSnapshot {
   persistent: boolean;
@@ -131,6 +140,36 @@ export interface MailuoApi {
   openBrowserDownload: (filePath: string) => Promise<string>;
   onBrowserOpenTab: (handler: (url: string) => void) => () => void;
   clearBrowserData: (scope?: "cookies" | "all") => Promise<void>;
+  listBrowserTabs: () => Promise<BrowserTabInfo[]>;
+  registerBrowserTab: (
+    registration: BrowserTabRegistration
+  ) => Promise<BrowserTabInfo>;
+  updateBrowserTab: (
+    tabId: string,
+    update: BrowserTabUpdate
+  ) => Promise<BrowserTabInfo | null>;
+  unregisterBrowserTab: (
+    tabId: string,
+    webContentsId?: number
+  ) => Promise<void>;
+  commandBrowserTab: (
+    action: "open" | "focus" | "close",
+    tabId?: string,
+    url?: string
+  ) => Promise<{ tabId?: string }>;
+  setBrowserAgentMode: (mode: BrowserAgentMode) => Promise<void>;
+  onBrowserTabsChanged: (
+    handler: (tabs: BrowserTabInfo[]) => void
+  ) => () => void;
+  onBrowserTabCommand: (
+    handler: (
+      command: BrowserTabCommand
+    ) => Promise<{ tabId?: string }> | { tabId?: string }
+  ) => () => void;
+  onBrowserApprovalRequest: (
+    handler: (request: BrowserApprovalRequest) => void
+  ) => () => void;
+  respondBrowserApproval: (response: BrowserApprovalResponse) => void;
   listAssetFolders: (projectId: string) => Promise<string[]>;
   createAssetFolder: (projectId: string, relativePath: string) => Promise<void>;
   moveAsset: (projectId: string, assetId: string, folder: string) => Promise<AssetRecord>;

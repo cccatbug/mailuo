@@ -7,6 +7,7 @@ import {
   type DockviewReadyEvent,
   type IDockviewHeaderActionsProps,
   type IDockviewPanelProps,
+  type IContextMenuItemComponentProps,
 } from "dockview-react";
 import "dockview-react/dist/styles/dockview.css";
 import {
@@ -24,7 +25,11 @@ import {
   Sparkles,
   SquareKanban,
   Trash2,
+  X,
+  CopyX,
+  ListX,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -52,8 +57,36 @@ import { FileEditor } from "@/features/files/FileEditor";
 import { BrowserPanel } from "@/features/files/BrowserPanel";
 import { AssetPanel } from "@/features/files/AssetPanel";
 import { useAppStore, type ViewMode } from "@/store/useAppStore";
+import { bridge } from "@/lib/bridge";
+import { closeDockPanels } from "./dock-menu";
 
 const LAYOUT_KEY = "mailuo-dock-v1";
+
+function DockContextMenuItem({
+  componentProps,
+}: IContextMenuItemComponentProps) {
+  const props = componentProps as
+    | {
+        label: string;
+        kind: "close" | "others" | "all";
+        destructive?: boolean;
+      }
+    | undefined;
+  if (!props) return null;
+  const Icon =
+    props.kind === "close" ? X : props.kind === "others" ? CopyX : ListX;
+  return (
+    <span
+      className={cn(
+        "flex w-full items-center gap-2",
+        props.destructive && "text-destructive"
+      )}
+    >
+      <Icon className="size-3.5" />
+      {props.label}
+    </span>
+  );
+}
 
 /* ---------- 面板内容 ---------- */
 
@@ -77,8 +110,13 @@ const components: Record<string, React.FunctionComponent<IDockviewPanelProps>> =
   ),
   browser: (props) => (
     <BrowserPanel
+      tabId={props.api.id}
+      active={props.api.isActive}
       initialUrl={
         typeof props.params?.url === "string" ? props.params.url : undefined
+      }
+      onTitleChange={(title) =>
+        props.api.setTitle(title.trim().slice(0, 80) || "浏览器")
       }
     />
   ),
@@ -138,9 +176,11 @@ export function openFilePanel(
 }
 
 /** 打开基于 Electron Chromium webview 的原生网页标签。 */
-export function openBrowserPanel(url = "https://www.google.com") {
+export function openBrowserPanel(
+  url = "https://www.google.com"
+): string | null {
   const api = dockRef.api;
-  if (!api) return;
+  if (!api) return null;
   const id = `browser:${crypto.randomUUID()}`;
   api.addPanel({
     id,
@@ -153,6 +193,22 @@ export function openBrowserPanel(url = "https://www.google.com") {
       direction: "within",
     },
   });
+  return id;
+}
+
+export function focusBrowserPanel(tabId: string): boolean {
+  const panel = dockRef.api?.getPanel(tabId);
+  if (!panel || !panel.id.startsWith("browser:")) return false;
+  panel.api.setActive();
+  return true;
+}
+
+export function closeBrowserPanel(tabId: string): boolean {
+  const api = dockRef.api;
+  const panel = api?.getPanel(tabId);
+  if (!api || !panel || !panel.id.startsWith("browser:")) return false;
+  api.removePanel(panel);
+  return true;
 }
 
 export function openAssetPanel() {
@@ -558,6 +614,7 @@ function Watermark() {
 }
 
 export function DockLayout() {
+  const { t } = useTranslation();
   const theme = useAppStore((s) => s.theme);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
@@ -599,6 +656,18 @@ export function DockLayout() {
       if (internalOp) return;
       dockRef.handleRemove?.(panel.id);
     });
+    const syncActiveBrowserTab = (activeId?: string) => {
+      for (const panel of event.api.panels) {
+        if (!panel.id.startsWith("browser:")) continue;
+        void bridge
+          ?.updateBrowserTab(panel.id, { active: panel.id === activeId })
+          .catch(() => undefined);
+      }
+    };
+    syncActiveBrowserTab(event.api.activePanel?.id);
+    event.api.onDidActivePanelChange(({ panel }) => {
+      syncActiveBrowserTab(panel?.id);
+    });
   };
 
   // store 开关 → 面板增删
@@ -616,11 +685,61 @@ export function DockLayout() {
       rightHeaderActionsComponent={HeaderActions}
       watermarkComponent={Watermark}
       onReady={onReady}
-      getTabContextMenuItems={() => [
-        "close",
-        "closeOthers",
+      getTabContextMenuItems={({ panel, group }) => [
+        {
+          label: t("dock.close"),
+          component: DockContextMenuItem,
+          componentProps: {
+            label: t("dock.close"),
+            kind: "close",
+          },
+          action: () =>
+            closeDockPanels(
+              group.panels.map((candidate) => ({
+                id: candidate.id,
+                close: () => candidate.api.close(),
+              })),
+              panel.id,
+              "current"
+            ),
+        },
+        {
+          label: t("dock.closeOthers"),
+          component: DockContextMenuItem,
+          componentProps: {
+            label: t("dock.closeOthers"),
+            kind: "others",
+          },
+          disabled: group.panels.length <= 1,
+          action: () =>
+            closeDockPanels(
+              group.panels.map((candidate) => ({
+                id: candidate.id,
+                close: () => candidate.api.close(),
+              })),
+              panel.id,
+              "others"
+            ),
+        },
         "separator",
-        "closeAll",
+        {
+          label: t("dock.closeAll"),
+          component: DockContextMenuItem,
+          componentProps: {
+            label: t("dock.closeAll"),
+            kind: "all",
+            destructive: true,
+          },
+          action: () =>
+            closeDockPanels(
+              group.panels.map((candidate) => ({
+                id: candidate.id,
+                close: () => candidate.api.close(),
+              })),
+              panel.id,
+              "all"
+            ),
+        },
       ]}
       floatingGroupBounds="boundedWithinViewport"
     />

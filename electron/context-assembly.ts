@@ -52,6 +52,22 @@ export function assembleAiContext({
     profile.sources.projectSnapshot
   );
   add("任务详情", requestContext.taskDetails, profile.sources.taskDetails);
+  if (
+    profile.sources.taskDetails.enabled &&
+    requestContext.browserTabs?.length
+  ) {
+    const browserTabs = requestContext.browserTabs
+      .map(
+        (tab) =>
+          `- tabId=${tab.tabId}；标题=${tab.title || "浏览器"}；网址=${tab.url}`
+      )
+      .join("\n");
+    const content = clipped(
+      browserTabs,
+      profile.sources.taskDetails.maxChars
+    );
+    if (content) blocks.push(`【用户 @ 引用的浏览器标签页】\n${content}`);
+  }
   add("长期记忆", longTermMemory, profile.sources.longTermMemory);
   add(
     "此前对话摘录",

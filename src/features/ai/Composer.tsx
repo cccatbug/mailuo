@@ -19,8 +19,11 @@ import {
   Upload,
   X,
   Hash,
+  Globe2,
+  ListTodo,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -49,6 +52,16 @@ import {
 } from "./attachments";
 import { getSkills, type SkillInfo } from "./skills";
 import type { AssetRecord } from "@/shared/assets";
+import type {
+  AssistantMention,
+  BrowserTabInfo,
+} from "@/shared/browser";
+import {
+  buildMentionCandidates,
+  mentionInputToken,
+  mentionKey,
+  mentionLabel,
+} from "./mentions";
 
 /* ---------- 内置快捷指令（/） ---------- */
 
@@ -147,16 +160,18 @@ export function Composer({
   onModelOverrideChange: (model: AiModelRef | null) => void;
   onSend: (
     text: string,
-    mentionedIds: string[],
+    mentions: AssistantMention[],
     skillNames: string[],
     attachments: ComposerAttachment[],
     assetRefs: AssetRecord[]
   ) => Promise<boolean>;
 }) {
+  const { t } = useTranslation();
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
 
   const [input, setInput] = useState("");
-  const [mentions, setMentions] = useState<Task[]>([]);
+  const [mentions, setMentions] = useState<AssistantMention[]>([]);
+  const [browserTabs, setBrowserTabs] = useState<BrowserTabInfo[]>([]);
   const [menu, setMenu] = useState<"none" | "mention" | "slash" | "skill" | "asset">("none");
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [usedSkills, setUsedSkills] = useState<string[]>([]);
@@ -186,6 +201,11 @@ export function Composer({
     () => () => attachmentsRef.current.forEach(releaseAttachment),
     []
   );
+
+  useEffect(() => {
+    void bridge?.listBrowserTabs().then(setBrowserTabs).catch(() => undefined);
+    return bridge?.onBrowserTabsChanged(setBrowserTabs);
+  }, []);
 
   /* 自适应高度 */
   useEffect(() => {
@@ -231,10 +251,12 @@ export function Composer({
     setMenu("none");
   };
 
-  const mentionCandidates = tasks
-    .filter((t) => !mentions.some((m) => m.id === t.id))
-    .filter((t) => t.title.toLowerCase().includes(query.toLowerCase()))
-    .slice(0, 8);
+  const mentionCandidates = buildMentionCandidates(
+    tasks,
+    browserTabs,
+    mentions,
+    query
+  );
   const slashCandidates = SLASH_SKILLS.filter((s) =>
     s.name.includes(query)
   );
@@ -246,12 +268,12 @@ export function Composer({
     .filter((asset) => `${asset.name} ${asset.relativePath} ${asset.tags.join(" ")}`.toLowerCase().includes(query.toLowerCase()))
     .slice(0, 8);
 
-  const applyMention = (task: Task) => {
+  const applyMention = (mention: AssistantMention) => {
     const ta = taRef.current;
     const caret = ta?.selectionStart ?? input.length;
     const before = input.slice(0, caret).replace(/@([^\s@]*)$/, "");
-    setInput(`${before}@${task.title} ${input.slice(caret)}`);
-    setMentions((prev) => [...prev, task]);
+    setInput(`${before}${mentionInputToken(mention)} ${input.slice(caret)}`);
+    setMentions((prev) => [...prev, mention]);
     setMenu("none");
     ta?.focus();
   };
@@ -377,7 +399,9 @@ export function Composer({
       if (!text && sendingAttachments.length === 0) return;
       const sent = await onSend(
         text,
-        mentions.filter((m) => input.includes(`@${m.title}`)).map((m) => m.id),
+        mentions.filter((mention) =>
+          input.includes(mentionInputToken(mention))
+        ),
         usedSkills.filter((n) => input.includes(`$${n}`)),
         sendingAttachments,
         referencedAssets.filter((asset) => input.includes(`#${asset.name}`))
@@ -465,14 +489,29 @@ export function Composer({
       {mentions.length > 0 && (
         <div className="mb-1.5 flex flex-wrap gap-1">
           {mentions.map((m) => (
-            <Badge key={m.id} variant="secondary" className="gap-1 pr-1 text-[11px]">
-              @{m.title}
+            <Badge
+              key={mentionKey(m)}
+              variant="secondary"
+              className="gap-1 pr-1 text-[11px]"
+            >
+              {m.kind === "browser-tab" ? (
+                <Globe2 className="size-3" />
+              ) : (
+                <ListTodo className="size-3" />
+              )}
+              @{mentionLabel(m)}
               <button
                 aria-label="移除引用"
                 className="rounded-full p-0.5 hover:bg-foreground/10"
                 onClick={() => {
-                  setMentions((prev) => prev.filter((x) => x.id !== m.id));
-                  setInput((v) => v.replace(`@${m.title}`, "").replace(/\s{2,}/g, " "));
+                  setMentions((prev) =>
+                    prev.filter((x) => mentionKey(x) !== mentionKey(m))
+                  );
+                  setInput((v) =>
+                    v
+                      .replace(mentionInputToken(m), "")
+                      .replace(/\s{2,}/g, " ")
+                  );
                 }}
               >
                 <X className="size-2.5" />
@@ -553,7 +592,7 @@ export function Composer({
           <div className="absolute bottom-full left-0 z-20 mb-1.5 w-72 overflow-hidden rounded-lg border bg-popover p-1 shadow-md">
             <p className="px-2 py-1 text-[10px] tracking-wider text-muted-foreground">
               {menu === "mention"
-                ? "引用任务（↑↓ 选择，⏎ 确认）"
+                ? t("browser.mentionHint")
                 : menu === "skill"
                   ? "引用 skill（~/.mailuo/ai/skills）"
                   : menu === "asset"
@@ -561,27 +600,54 @@ export function Composer({
                   : "快捷指令"}
             </p>
             {menu === "mention"
-              ? mentionCandidates.map((t, i) => (
-                  <button
-                    key={t.id}
-                    className={cn(
-                      "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm",
-                      i === highlight ? "bg-accent" : "hover:bg-accent/60"
-                    )}
-                    onMouseEnter={() => setHighlight(i)}
-                    onClick={() => applyMention(t)}
-                  >
-                    <span
-                      className={cn(
-                        "size-2 shrink-0 rounded-full",
-                        t.status === "done" && "bg-status-done",
-                        t.status === "doing" && "bg-status-doing",
-                        t.status === "todo" && "bg-status-todo"
-                      )}
-                    />
-                    <span className="truncate">{t.title}</span>
-                  </button>
-                ))
+              ? (["task", "browser"] as const).map((group) => {
+                  const grouped = mentionCandidates.filter(
+                    (candidate) => candidate.group === group
+                  );
+                  if (grouped.length === 0) return null;
+                  return (
+                    <div key={group}>
+                      <p className="px-2 pt-1.5 pb-0.5 text-[10px] font-medium text-muted-foreground">
+                        {group === "task"
+                          ? t("browser.tasks")
+                          : t("browser.tabs")}
+                      </p>
+                      {grouped.map((candidate) => {
+                        const index = mentionCandidates.indexOf(candidate);
+                        const mention = candidate.mention;
+                        return (
+                          <button
+                            key={mentionKey(mention)}
+                            className={cn(
+                              "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm",
+                              index === highlight
+                                ? "bg-accent"
+                                : "hover:bg-accent/60"
+                            )}
+                            onMouseEnter={() => setHighlight(index)}
+                            onClick={() => applyMention(mention)}
+                          >
+                            {mention.kind === "task" ? (
+                              <ListTodo className="size-3.5 shrink-0 text-primary" />
+                            ) : (
+                              <Globe2 className="size-3.5 shrink-0 text-primary" />
+                            )}
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate">
+                                {mentionLabel(mention)}
+                              </span>
+                              {mention.kind === "browser-tab" && (
+                                <span className="block truncate text-[10px] text-muted-foreground">
+                                  {mention.url}
+                                </span>
+                              )}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })
               : menu === "skill"
                 ? skillCandidates.map((s, i) => (
                     <button
@@ -661,7 +727,10 @@ export function Composer({
               }
               if (e.key === "Enter" || e.key === "Tab") {
                 e.preventDefault();
-                if (menu === "mention") applyMention(mentionCandidates[highlight]);
+                if (menu === "mention") {
+                  const candidate = mentionCandidates[highlight];
+                  if (candidate) applyMention(candidate.mention);
+                }
                 else if (menu === "skill") applySkill(skillCandidates[highlight]);
                 else if (menu === "asset") applyAsset(assetCandidates[highlight]);
                 else applySlash(slashCandidates[highlight]);
@@ -766,7 +835,7 @@ export function Composer({
           <Button
             variant="ghost"
             size="icon-sm"
-            aria-label="引用任务"
+            aria-label="引用任务或浏览器标签页"
             className="size-6.5 text-muted-foreground hover:text-foreground"
             onClick={() => {
               setInput((v) => `${v}@`);

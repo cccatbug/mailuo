@@ -2,21 +2,18 @@ import { createElement, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
-  Bot,
   ExternalLink,
   Globe2,
   LoaderCircle,
   MoreVertical,
   RefreshCw,
   Search,
-  Sparkles,
-  X,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { bridge } from "@/lib/bridge";
-import { useAppStore } from "@/store/useAppStore";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,6 +27,7 @@ interface MailuoWebview extends HTMLElement {
   src: string;
   getURL(): string;
   getTitle(): string;
+  getWebContentsId(): number;
   canGoBack(): boolean;
   canGoForward(): boolean;
   goBack(): void;
@@ -52,18 +50,18 @@ function normalizeAddress(value: string): string {
   return `https://www.google.com/search?q=${encodeURIComponent(input)}`;
 }
 
-const EXTRACT_SCRIPT = `(() => {
-  const root = document.querySelector('article, main, [role="main"]') || document.body;
-  const clone = root.cloneNode(true);
-  clone.querySelectorAll('script,style,noscript,nav,footer,header,svg').forEach((node) => node.remove());
-  return {
-    title: document.title,
-    url: location.href,
-    text: (clone.innerText || clone.textContent || '').replace(/\\n{3,}/g, '\\n\\n').trim().slice(0, 30000)
-  };
-})()`;
-
-export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
+export function BrowserPanel({
+  tabId,
+  active,
+  initialUrl,
+  onTitleChange,
+}: {
+  tabId: string;
+  active: boolean;
+  initialUrl?: string;
+  onTitleChange?: (title: string) => void;
+}) {
+  const { t } = useTranslation();
   const webviewRef = useRef<MailuoWebview | null>(null);
   // webview 的 src 只能用于首次导航。把网页自身导航写回 src 会触发重载，
   // 从而打断 CAS/OAuth 的 302、POST 和 window.opener 回跳链。
@@ -74,15 +72,44 @@ export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
   const [loading, setLoading] = useState(true);
   const [canBack, setCanBack] = useState(false);
   const [canForward, setCanForward] = useState(false);
-  const [assistantOpen, setAssistantOpen] = useState(false);
-  const [asking, setAsking] = useState(false);
-  const [question, setQuestion] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     const view = webviewRef.current;
     if (!view) return;
-    const sync = (event?: Event) => {
+    let registeredWebContentsId: number | undefined;
+    const updateRegistration = (
+      update: {
+        title?: string;
+        url?: string;
+        active?: boolean;
+        loading?: boolean;
+        navigation?: boolean;
+      }
+    ) => {
+      void bridge?.updateBrowserTab(tabId, update).catch(() => undefined);
+    };
+    const register = () => {
+      const webContentsId = view.getWebContentsId?.();
+      if (!webContentsId) return;
+      registeredWebContentsId = webContentsId;
+      const title = view.getTitle?.() || "浏览器";
+      const url = view.getURL?.() || currentUrlRef.current;
+      onTitleChange?.(title);
+      void bridge
+        ?.registerBrowserTab({
+          tabId,
+          webContentsId,
+          title,
+          url,
+          active,
+          loading,
+        })
+        .catch((error) => {
+          console.warn("浏览器标签页注册失败", error);
+        });
+    };
+    const sync = (event?: Event, navigation = false) => {
       const navigationEvent = event as Event & {
         url?: string;
         detail?: { url?: string };
@@ -99,14 +126,28 @@ export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
       setCurrentUrl(next);
       setCanBack(view.canGoBack?.() ?? false);
       setCanForward(view.canGoForward?.() ?? false);
+      updateRegistration({
+        url: next,
+        title: view.getTitle?.() || "浏览器",
+        loading: false,
+        navigation,
+      });
     };
     const start = () => {
       setLoading(true);
       setLoadError(null);
+      updateRegistration({ loading: true });
     };
     const stop = (event: Event) => {
       setLoading(false);
       sync(event);
+    };
+    const navigated = (event: Event) => sync(event, true);
+    const titleUpdated = (event: Event) => {
+      const titleEvent = event as Event & { title?: string };
+      const title = titleEvent.title || view.getTitle?.() || "浏览器";
+      onTitleChange?.(title);
+      updateRegistration({ title });
     };
     const failed = (event: Event) => {
       const failure = event as Event & {
@@ -118,22 +159,30 @@ export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
       if (failure.isMainFrame === false || failure.errorCode === -3) return;
       setLoading(false);
       setLoadError(failure.errorDescription || "页面加载失败");
+      updateRegistration({ loading: false });
     };
+    view.addEventListener("dom-ready", register);
     view.addEventListener("did-start-loading", start);
     view.addEventListener("did-stop-loading", stop);
-    view.addEventListener("did-navigate", sync);
-    view.addEventListener("did-navigate-in-page", sync);
-    view.addEventListener("did-redirect-navigation", sync);
+    view.addEventListener("did-navigate", navigated);
+    view.addEventListener("did-navigate-in-page", navigated);
+    view.addEventListener("did-redirect-navigation", navigated);
+    view.addEventListener("page-title-updated", titleUpdated);
     view.addEventListener("did-fail-load", failed);
     return () => {
+      view.removeEventListener("dom-ready", register);
       view.removeEventListener("did-start-loading", start);
       view.removeEventListener("did-stop-loading", stop);
-      view.removeEventListener("did-navigate", sync);
-      view.removeEventListener("did-navigate-in-page", sync);
-      view.removeEventListener("did-redirect-navigation", sync);
+      view.removeEventListener("did-navigate", navigated);
+      view.removeEventListener("did-navigate-in-page", navigated);
+      view.removeEventListener("did-redirect-navigation", navigated);
+      view.removeEventListener("page-title-updated", titleUpdated);
       view.removeEventListener("did-fail-load", failed);
+      void bridge
+        ?.unregisterBrowserTab(tabId, registeredWebContentsId)
+        .catch(() => undefined);
     };
-  }, []);
+  }, [tabId]);
 
   const navigate = () => {
     const next = normalizeAddress(address);
@@ -145,46 +194,6 @@ export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
     setCurrentUrl(next);
     setAddress(next);
     void view?.loadURL(next);
-  };
-
-  const askShu = async (preset?: string) => {
-    const view = webviewRef.current;
-    if (!view || asking) return;
-    setAsking(true);
-    try {
-      if (!useAppStore.getState().selectedProjectId) {
-        throw new Error("请先选择一个项目，再把网页交给小枢");
-      }
-      const page = await view.executeJavaScript<{
-        title: string;
-        url: string;
-        text: string;
-      }>(EXTRACT_SCRIPT);
-      if (!page.text) throw new Error("当前页面没有可提取的正文");
-      const request =
-        preset ||
-        question.trim() ||
-        "请提炼这篇网页最重要的信息，并列出关键事实和可执行结论。";
-      useAppStore.getState().setAssistantOpen(true);
-      (window as Window & { __mailuoPendingBrowserAsk?: unknown }).__mailuoPendingBrowserAsk = {
-        prompt: request,
-        page,
-      };
-      window.dispatchEvent(
-        new CustomEvent("mailuo:browser-ask-shu", {
-          detail: { prompt: request, page },
-        })
-      );
-      setQuestion("");
-      setAssistantOpen(false);
-      toast.success("已交给当前项目的小枢", {
-        description: "网页内容、项目上下文、资产和记忆会在同一会话中使用。",
-      });
-    } catch (error) {
-      toast.error("小枢读取网页失败", { description: String(error) });
-    } finally {
-      setAsking(false);
-    }
   };
 
   return (
@@ -210,21 +219,28 @@ export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
           <Input
             value={address}
             className="h-7 rounded-full bg-muted/50 pr-8 pl-8 text-xs"
-            aria-label="网址或搜索"
+            aria-label={t("browser.address")}
             onChange={(event) => setAddress(event.target.value)}
           />
           <Search className="pointer-events-none absolute top-1/2 right-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
         </form>
-        <Button variant="ghost" size="icon-sm" title="在系统浏览器打开" onClick={() => bridge?.openExternal(currentUrl)}>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          title={t("browser.openExternal")}
+          onClick={() => bridge?.openExternal(currentUrl)}
+        >
           <ExternalLink />
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon-sm" title="浏览器工具"><MoreVertical /></Button>
+            <Button variant="ghost" size="icon-sm" title={t("browser.tools")}>
+              <MoreVertical />
+            </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem onClick={() => webviewRef.current?.openDevTools()}>
-              打开开发者工具
+              {t("browser.openDevTools")}
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => {
               const view = webviewRef.current;
@@ -232,7 +248,7 @@ export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
               if (view.isDevToolsOpened()) view.closeDevTools();
               else view.openDevTools();
             }}>
-              切换网页控制台
+              {t("browser.toggleConsole")}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
@@ -245,19 +261,10 @@ export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
                 });
               }}
             >
-              清除 Cookie 与缓存…
+              {t("browser.clearData")}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        <Button
-          variant={assistantOpen ? "secondary" : "ghost"}
-          size="sm"
-          className="h-7"
-          onClick={() => setAssistantOpen((open) => !open)}
-        >
-          <Sparkles className="text-primary" />
-          小枢
-        </Button>
       </div>
       {createElement("webview", {
         ref: (node: MailuoWebview | null) => {
@@ -273,46 +280,6 @@ export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
         <div className="pointer-events-none absolute inset-x-3 top-13 z-10 rounded-lg border border-destructive/30 bg-background/95 px-3 py-2 text-xs text-destructive shadow-sm">
           {loadError}。如果这是扫码登录回跳，请确认对应客户端已安装；HTTP(S) 登录弹窗会保留在脉络浏览会话中。
         </div>
-      )}
-      {assistantOpen && (
-        <aside className="absolute top-11 right-2 bottom-2 z-20 flex w-[min(380px,calc(100%-16px))] flex-col overflow-hidden rounded-xl border bg-background/96 shadow-2xl backdrop-blur">
-          <div className="flex h-10 shrink-0 items-center gap-2 border-b px-3">
-            <Bot className="size-4 text-primary" />
-            <span className="text-sm font-medium">小枢 · 网页助手</span>
-            <Button variant="ghost" size="icon-sm" className="ml-auto" onClick={() => setAssistantOpen(false)}>
-              <X />
-            </Button>
-          </div>
-          <div className="flex gap-1 border-b p-2">
-            {[
-              ["总结", "用 5 个要点总结当前网页，并给出一句话结论。"],
-              ["提取", "提取人物、组织、日期、数字、链接及关键事实，分类列出。"],
-              ["行动项", "从网页中提取可执行行动项，按优先级排列。"],
-            ].map(([label, prompt]) => (
-              <Button key={label} variant="outline" size="sm" disabled={asking} onClick={() => void askShu(prompt)}>
-                {label}
-              </Button>
-            ))}
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto p-3 text-sm">
-            <div className="flex h-full items-center justify-center text-center text-xs leading-relaxed text-muted-foreground">
-              当前网页会作为上下文发送给应用外围的小枢。<br />
-              小枢仍可使用当前项目任务、资产、记忆、模型和 Agent 工具。
-            </div>
-          </div>
-          <form
-            className="flex gap-2 border-t p-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void askShu();
-            }}
-          >
-            <Input value={question} placeholder="问问当前网页…" disabled={asking} onChange={(event) => setQuestion(event.target.value)} />
-            <Button type="submit" size="sm" disabled={asking || !question.trim()}>
-              {asking ? <LoaderCircle className="animate-spin" /> : "发送"}
-            </Button>
-          </form>
-        </aside>
       )}
     </div>
   );

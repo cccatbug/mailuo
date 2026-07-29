@@ -7,10 +7,12 @@ import {
   Globe2,
   Info,
   MoonStar,
+  Monitor,
   Palette,
   RotateCcw,
   SunMedium,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -44,6 +46,7 @@ import {
 import { bridge } from "@/lib/bridge";
 import { hasNative } from "@/lib/platform";
 import { useAppStore } from "@/store/useAppStore";
+import type { ThemeMode, ThemePalette } from "@/lib/theme";
 import { seedData } from "@/store/seed";
 import { AiSettingsPane } from "./AiSettingsPane";
 import { BrowserSettingsPane } from "./BrowserSettingsPane";
@@ -84,33 +87,92 @@ function SectionHeading({ children }: { children: React.ReactNode }) {
 /* ---------- 各分区 ---------- */
 
 function AppearancePane() {
-  const theme = useAppStore((s) => s.theme);
-  const setTheme = useAppStore((s) => s.setTheme);
+  const { t } = useTranslation();
+  const themeMode = useAppStore((s) => s.themeMode);
+  const themePalette = useAppStore((s) => s.themePalette);
+  const setThemeMode = useAppStore((s) => s.setThemeMode);
+  const setThemePalette = useAppStore((s) => s.setThemePalette);
   const settings = useAppStore((s) => s.settings);
   const setSettings = useAppStore((s) => s.setSettings);
+  const palettes: ThemePalette[] = [
+    "paper",
+    "moon",
+    "celadon",
+    "graphite",
+  ];
   return (
     <div>
-      <SectionHeading>主题</SectionHeading>
-      <SettingRow title="基础色调" description="浅色取意米纸松墨，深色取意夜色沉墨。">
+      <SectionHeading>{t("appearance.theme")}</SectionHeading>
+      <SettingRow
+        title={t("appearance.mode")}
+        description={t("appearance.modeDescription")}
+      >
         <ToggleGroup
           type="single"
           variant="outline"
           size="sm"
-          value={theme}
-          onValueChange={(v) => v && setTheme(v as "light" | "dark")}
+          value={themeMode}
+          onValueChange={(value) =>
+            value && setThemeMode(value as ThemeMode)
+          }
         >
+          <ToggleGroupItem value="system">
+            <Monitor />
+            {t("appearance.system")}
+          </ToggleGroupItem>
           <ToggleGroupItem value="light">
             <SunMedium />
-            浅色
+            {t("appearance.light")}
           </ToggleGroupItem>
           <ToggleGroupItem value="dark">
             <MoonStar />
-            深色
+            {t("appearance.dark")}
           </ToggleGroupItem>
         </ToggleGroup>
       </SettingRow>
+      <SettingRow
+        title={t("appearance.palette")}
+        description={t("appearance.paletteDescription")}
+      >
+        <div className="grid w-72 grid-cols-2 gap-2">
+          {palettes.map((palette) => (
+            <button
+              key={palette}
+              data-palette-preview={palette}
+              className={cn(
+                "flex items-center gap-2 rounded-lg border p-2 text-left text-xs transition-colors hover:bg-accent",
+                themePalette === palette &&
+                  "border-primary bg-accent ring-2 ring-ring/40"
+              )}
+              onClick={() => setThemePalette(palette)}
+            >
+              <span className="theme-palette-swatch size-5 shrink-0 rounded-full border" />
+              {t(`appearance.${palette}`)}
+            </button>
+          ))}
+        </div>
+      </SettingRow>
 
-      <SectionHeading>界面</SectionHeading>
+      <SectionHeading>{t("appearance.interface")}</SectionHeading>
+      <SettingRow
+        title={t("appearance.language")}
+        description={t("appearance.languageDescription")}
+      >
+        <Select
+          value={settings.locale}
+          onValueChange={(locale) =>
+            setSettings({ locale: locale === "en" ? "en" : "zh-CN" })
+          }
+        >
+          <SelectTrigger size="sm" className="w-32">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="zh-CN">简体中文</SelectItem>
+            <SelectItem value="en">English</SelectItem>
+          </SelectContent>
+        </Select>
+      </SettingRow>
       <SettingRow title="界面缩放" description="整体等比缩放，适配不同屏幕密度。">
         <Select
           value={String(settings.uiScale)}

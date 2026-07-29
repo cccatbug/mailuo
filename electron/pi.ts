@@ -27,6 +27,8 @@ import {
   type ResolvedAiRoute,
 } from "./ai-runtime";
 import { AgentTurnAccumulator } from "./agent-turn";
+import { createBrowserTools } from "./browser-tools";
+import { BROWSER_CONTROL } from "./browser-runtime";
 import { assembleAiContext } from "./context-assembly";
 import {
   ASSISTANT_SYSTEM_PROMPT,
@@ -239,6 +241,7 @@ async function makeSession(
     systemPromptOverride: () => fullSystem,
   });
   await resourceLoader.reload();
+  const customTools = opts.withTools ? createBrowserTools(cwd) : [];
 
   const { session } = await createAgentSession({
     cwd,
@@ -250,7 +253,22 @@ async function makeSession(
     settingsManager,
     resourceLoader,
     // 纯任务型调用不开工具；小枢会话开放安全内建工具
-    tools: opts.withTools ? ["read", "bash", "edit", "write", "grep", "find", "ls"] : [],
+    tools: opts.withTools
+      ? [
+          "read",
+          "bash",
+          "edit",
+          "write",
+          "grep",
+          "find",
+          "ls",
+          "browser_tabs",
+          "browser_snapshot",
+          "browser_act",
+          "browser_capture",
+        ]
+      : [],
+    customTools,
   });
   return session;
 }
@@ -304,6 +322,19 @@ function extractResultText(result: unknown): string {
 
 const clip = (s: string, n: number) =>
   s.length > n ? `${s.slice(0, n)}\n…（截断）` : s;
+
+function redactBrowserToolText(toolName: string, value: string): string {
+  if (!toolName.startsWith("browser_")) return value;
+  return value
+    .replace(
+      /("(?:value|script|promptText)"\s*:\s*)"(?:[^"\\]|\\.)*"/gi,
+      '$1"[已隐藏]"'
+    )
+    .replace(
+      /("(?:cookie|authorization|set-cookie)"\s*:\s*)"(?:[^"\\]|\\.)*"/gi,
+      '$1"[已隐藏]"'
+    );
+}
 
 /* ---------- 用户附件 ---------- */
 
@@ -568,7 +599,13 @@ export async function assistantSend(
           type: "tool_start",
           id: event.toolCallId,
           name: event.toolName,
-          args: clip(JSON.stringify(event.args ?? {}), 600),
+          args: clip(
+            redactBrowserToolText(
+              event.toolName,
+              JSON.stringify(event.args ?? {})
+            ),
+            600
+          ),
           ...(file ? { file } : {}),
         });
         break;
@@ -579,7 +616,13 @@ export async function assistantSend(
           id: event.toolCallId,
           name: event.toolName,
           ok: !event.isError,
-          output: clip(extractResultText(event.result), 4000),
+          output: clip(
+            redactBrowserToolText(
+              event.toolName,
+              extractResultText(event.result)
+            ),
+            4000
+          ),
         });
         break;
       default:
@@ -588,6 +631,9 @@ export async function assistantSend(
   });
 
   try {
+    BROWSER_CONTROL.setDefaultTabIds(
+      requestContext?.browserTabs?.map((tab) => tab.tabId) ?? []
+    );
     await session.prompt(prepared.message, { images: prepared.images });
     if (!turn.finish()) throw new Error("模型返回了空回复");
     const usage = session.getContextUsage();
@@ -608,6 +654,7 @@ export async function assistantSend(
     emit({ type: "error", message: msg });
     throw new Error(msg);
   } finally {
+    BROWSER_CONTROL.setDefaultTabIds([]);
     unsubscribe();
   }
 }

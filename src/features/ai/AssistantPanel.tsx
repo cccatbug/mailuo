@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import {
   AlertCircle,
+  Bot,
   Brain,
   Check,
   ChevronRight,
@@ -12,11 +13,13 @@ import {
   Settings2,
   Wrench,
   X,
+  Globe2,
+  ShieldAlert,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { ShuLogo } from "@/components/ShuLogo";
 import { assistantReset, assistantSend } from "@/lib/ai";
 import {
   bridge,
@@ -45,6 +48,12 @@ import type { AiModelRef } from "@/shared/ai-config";
 import type { RouteResolutionStatus } from "@/shared/ai-config";
 import type { AssetRecord, AssetReference } from "@/shared/assets";
 import { openAsset } from "@/features/files/AssetPanel";
+import type {
+  AssistantMention,
+  BrowserApprovalRequest,
+  BrowserTabMention,
+} from "@/shared/browser";
+import { mentionKey, mentionLabel } from "./mentions";
 
 /* ---------- 消息模型：分段时间线（文本 / 思考 / 工具） ---------- */
 
@@ -73,6 +82,7 @@ export interface Message {
   files?: string[];
   attachments?: AssistantAttachmentMeta[];
   assets?: AssetReference[];
+  mentions?: AssistantMention[];
 }
 
 export interface Conversation {
@@ -246,12 +256,10 @@ function conversationExcerpt(conv: Conversation): string {
 
 async function sendMessage(
   text: string,
-  mentionedIds: string[],
+  mentions: AssistantMention[],
   skillNames: string[],
-  attachments: ComposerAttachment[]
-  ,
-  assetRefs: AssetRecord[],
-  browserContext = ""
+  attachments: ComposerAttachment[],
+  assetRefs: AssetRecord[]
 ): Promise<boolean> {
   const store = useAppStore.getState();
   const projectId = store.selectedProjectId;
@@ -265,7 +273,16 @@ async function sendMessage(
     text.trim() || "请查看本轮附件，并结合当前项目给出分析或完成请求。";
 
   const projectTasks = store.tasks.filter((t) => t.projectId === projectId);
-  const mentioned = projectTasks.filter((t) => mentionedIds.includes(t.id));
+  const mentionedTaskIds = new Set(
+    mentions
+      .filter((mention) => mention.kind === "task")
+      .map((mention) => mention.taskId)
+  );
+  const mentioned = projectTasks.filter((t) => mentionedTaskIds.has(t.id));
+  const browserTabs = mentions.filter(
+    (mention): mention is BrowserTabMention =>
+      mention.kind === "browser-tab"
+  );
   const mentionContext = mentioned.length
     ? `\n\n【用户 @ 引用的任务详情】\n${mentioned
         .map(
@@ -322,6 +339,7 @@ async function sendMessage(
         content: text,
         attachments: attachments.map(attachmentMeta),
         assets: validAssets.map((item) => item.ref),
+        mentions,
       },
       { role: "assistant", content: "", parts: [], streaming: true },
     ],
@@ -331,7 +349,8 @@ async function sendMessage(
   void completeAssistantTurn({
     agentText,
     attachmentPayloads,
-    mentionContext: `${mentionContext}${assetContext}${browserContext}`,
+    mentionContext: `${mentionContext}${assetContext}`,
+    browserTabs,
     projectId,
     skillNames,
     staleContext,
@@ -348,6 +367,7 @@ async function completeAssistantTurn({
   skillNames,
   staleContext,
   modelOverride,
+  browserTabs,
 }: {
   agentText: string;
   attachmentPayloads: ReturnType<typeof attachmentPayload>[];
@@ -356,6 +376,7 @@ async function completeAssistantTurn({
   skillNames: string[];
   staleContext: string;
   modelOverride?: AiModelRef;
+  browserTabs: BrowserTabMention[];
 }): Promise<void> {
   let fullText = "";
   let segText = "";
@@ -459,6 +480,7 @@ async function completeAssistantTurn({
         taskDetails: mentionContext,
         conversationHistory: staleContext,
         skillNames,
+        browserTabs,
       },
       modelOverride,
       onEvent
@@ -657,6 +679,7 @@ function UserAttachment({
 }
 
 export function AssistantPanel() {
+  const { t } = useTranslation();
   const selectedProjectId = useAppStore((s) => s.selectedProjectId);
   const tasks = useAppStore((s) => s.tasks);
   const projectTasks = tasks.filter((t) => t.projectId === selectedProjectId);
@@ -668,6 +691,9 @@ export function AssistantPanel() {
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
   const [assistantStatus, setAssistantStatus] =
     useState<RouteResolutionStatus | null>(null);
+  const [browserApprovals, setBrowserApprovals] = useState<
+    BrowserApprovalRequest[]
+  >([]);
   const conv = conversations.find((c) => c.id === currentId) ?? null;
   const messages =
     conv && conv.projectId === selectedProjectId ? conv.messages : [];
@@ -718,31 +744,20 @@ export function AssistantPanel() {
   }, []);
 
   useEffect(() => {
-    type BrowserAsk = {
-      prompt: string;
-      page: { title: string; url: string; text: string };
-    };
-    const runBrowserAsk = (detail: BrowserAsk | undefined) => {
-      if (!detail?.page || useChat.getState().busy) {
-        if (useChat.getState().busy) toast.error("小枢正在处理上一条消息");
-        return;
+    const pending = new Set<string>();
+    const unsubscribe = bridge?.onBrowserApprovalRequest((request) => {
+      pending.add(request.id);
+      setBrowserApprovals((current) => [
+        ...current.filter((item) => item.id !== request.id),
+        request,
+      ]);
+    });
+    return () => {
+      unsubscribe?.();
+      for (const id of pending) {
+        bridge?.respondBrowserApproval({ id, allowed: false });
       }
-      const context = `\n\n【当前内置浏览器网页】\n标题：${detail.page.title}\n网址：${detail.page.url}\n正文：\n${detail.page.text}`;
-      void sendMessage(detail.prompt, [], [], [], [], context);
     };
-    const handleBrowserAsk = (event: Event) => {
-      const detail = (event as CustomEvent<BrowserAsk>).detail;
-      delete (window as Window & { __mailuoPendingBrowserAsk?: BrowserAsk }).__mailuoPendingBrowserAsk;
-      runBrowserAsk(detail);
-    };
-    window.addEventListener("mailuo:browser-ask-shu", handleBrowserAsk);
-    const pendingWindow = window as Window & { __mailuoPendingBrowserAsk?: BrowserAsk };
-    if (pendingWindow.__mailuoPendingBrowserAsk) {
-      const pending = pendingWindow.__mailuoPendingBrowserAsk;
-      delete pendingWindow.__mailuoPendingBrowserAsk;
-      runBrowserAsk(pending);
-    }
-    return () => window.removeEventListener("mailuo:browser-ask-shu", handleBrowserAsk);
   }, []);
 
   const applyOps = (idx: number) => {
@@ -763,16 +778,16 @@ export function AssistantPanel() {
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-4">
         {messages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-sm text-muted-foreground">
-            <ShuLogo className="size-12 text-primary/70" />
+            <Bot className="size-12 text-primary/70" />
             <p className="font-heading text-base font-bold text-foreground">
               我是小枢
             </p>
             <p>
               创建任务、编织依赖、画图表、写文档——
               <br />
-              我能用 bash / 读写文件，产出都存进项目工作区。
+              我能操作任务、文件和你当前打开的内置浏览器标签页。
             </p>
-            <p className="text-xs">@ 引用任务 · $ 引用 skill · / 快捷指令</p>
+            <p className="text-xs">@ 引用任务或浏览器 · $ 引用 skill · / 快捷指令</p>
           </div>
         ) : (
           <div className="flex flex-col gap-3">
@@ -786,7 +801,7 @@ export function AssistantPanel() {
               >
                 {m.role === "assistant" && (
                   <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <ShuLogo className="size-4 text-primary" />
+                    <Bot className="size-4 text-primary" />
                     小枢
                   </span>
                 )}
@@ -796,6 +811,37 @@ export function AssistantPanel() {
                     {m.content && (
                       <div className="rounded-xl bg-primary px-3.5 py-2 text-sm whitespace-pre-wrap text-primary-foreground">
                         {m.content}
+                      </div>
+                    )}
+                    {m.mentions && m.mentions.length > 0 && (
+                      <div className="flex flex-wrap justify-end gap-1">
+                        {m.mentions.map((mention) => (
+                          <button
+                            key={mentionKey(mention)}
+                            className="flex items-center gap-1 rounded-lg border border-primary/20 bg-primary/8 px-2 py-1 text-[11px]"
+                            onClick={() => {
+                              if (mention.kind === "browser-tab") {
+                                void bridge?.commandBrowserTab(
+                                  "focus",
+                                  mention.tabId
+                                ).catch(() =>
+                                  toast.error("该浏览器标签页已经关闭")
+                                );
+                              } else {
+                                useAppStore
+                                  .getState()
+                                  .selectTask(mention.taskId);
+                              }
+                            }}
+                          >
+                            {mention.kind === "browser-tab" ? (
+                              <Globe2 className="size-3" />
+                            ) : (
+                              <Check className="size-3" />
+                            )}
+                            @{mentionLabel(mention)}
+                          </button>
+                        ))}
                       </div>
                     )}
                     {m.attachments && m.attachments.length > 0 && (
@@ -943,6 +989,60 @@ export function AssistantPanel() {
           </Button>
         </div>
       )}
+
+      {browserApprovals.map((approval) => (
+        <div
+          key={approval.id}
+          className="mx-3 mb-2 rounded-xl border border-primary/25 bg-card p-3 shadow-sm"
+        >
+          <div className="flex items-start gap-2">
+            <ShieldAlert className="mt-0.5 size-4 shrink-0 text-primary" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">
+                {t("browser.approvalTitle")}
+              </p>
+              <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                {approval.tabTitle} · {approval.action}
+                {approval.target ? ` · ${approval.target}` : ""}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {approval.reason}
+              </p>
+            </div>
+          </div>
+          <div className="mt-2 flex justify-end gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                bridge?.respondBrowserApproval({
+                  id: approval.id,
+                  allowed: false,
+                });
+                setBrowserApprovals((items) =>
+                  items.filter((item) => item.id !== approval.id)
+                );
+              }}
+            >
+              {t("common.deny")}
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                bridge?.respondBrowserApproval({
+                  id: approval.id,
+                  allowed: true,
+                });
+                setBrowserApprovals((items) =>
+                  items.filter((item) => item.id !== approval.id)
+                );
+              }}
+            >
+              {t("common.allowOnce")}
+            </Button>
+          </div>
+        </div>
+      ))}
 
       <Composer
         tasks={projectTasks}

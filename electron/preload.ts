@@ -22,6 +22,15 @@ import type {
   AssetTagMode,
   AssetTagRecord,
 } from "../src/shared/assets";
+import type {
+  BrowserAgentMode,
+  BrowserApprovalRequest,
+  BrowserApprovalResponse,
+  BrowserTabCommand,
+  BrowserTabInfo,
+  BrowserTabRegistration,
+  BrowserTabUpdate,
+} from "../src/shared/browser";
 
 const api = {
   platform: process.platform as NodeJS.Platform,
@@ -171,6 +180,78 @@ const api = {
   },
   clearBrowserData: (scope: "cookies" | "all" = "all"): Promise<void> =>
     ipcRenderer.invoke("browser:clear-data", scope),
+  listBrowserTabs: (): Promise<BrowserTabInfo[]> =>
+    ipcRenderer.invoke("browser:tabs:list"),
+  registerBrowserTab: (
+    registration: BrowserTabRegistration
+  ): Promise<BrowserTabInfo> =>
+    ipcRenderer.invoke("browser:tabs:register", registration),
+  updateBrowserTab: (
+    tabId: string,
+    update: BrowserTabUpdate
+  ): Promise<BrowserTabInfo | null> =>
+    ipcRenderer.invoke("browser:tabs:update", tabId, update),
+  unregisterBrowserTab: (
+    tabId: string,
+    webContentsId?: number
+  ): Promise<void> =>
+    ipcRenderer.invoke("browser:tabs:unregister", tabId, webContentsId),
+  commandBrowserTab: (
+    action: "open" | "focus" | "close",
+    tabId?: string,
+    url?: string
+  ): Promise<{ tabId?: string }> =>
+    ipcRenderer.invoke("browser:tabs:command", { action, tabId, url }),
+  setBrowserAgentMode: (mode: BrowserAgentMode): Promise<void> =>
+    ipcRenderer.invoke("browser:agent-mode", mode),
+  onBrowserTabsChanged: (
+    handler: (tabs: BrowserTabInfo[]) => void
+  ): (() => void) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      tabs: BrowserTabInfo[]
+    ) => handler(tabs);
+    ipcRenderer.on("browser:tabs-changed", listener);
+    return () => ipcRenderer.removeListener("browser:tabs-changed", listener);
+  },
+  onBrowserTabCommand: (
+    handler: (command: BrowserTabCommand) => Promise<{ tabId?: string }> | { tabId?: string }
+  ): (() => void) => {
+    const listener = async (
+      _event: Electron.IpcRendererEvent,
+      command: BrowserTabCommand
+    ) => {
+      try {
+        const result = await handler(command);
+        ipcRenderer.send("browser:tab-command-result", {
+          requestId: command.requestId,
+          ok: true,
+          ...result,
+        });
+      } catch (error) {
+        ipcRenderer.send("browser:tab-command-result", {
+          requestId: command.requestId,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    };
+    ipcRenderer.on("browser:tab-command", listener);
+    return () => ipcRenderer.removeListener("browser:tab-command", listener);
+  },
+  onBrowserApprovalRequest: (
+    handler: (request: BrowserApprovalRequest) => void
+  ): (() => void) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      request: BrowserApprovalRequest
+    ) => handler(request);
+    ipcRenderer.on("browser:approval-request", listener);
+    return () =>
+      ipcRenderer.removeListener("browser:approval-request", listener);
+  },
+  respondBrowserApproval: (response: BrowserApprovalResponse): void =>
+    ipcRenderer.send("browser:approval-response", response),
   listAssetFolders: (projectId: string): Promise<string[]> =>
     ipcRenderer.invoke("assets:folders", projectId),
   createAssetFolder: (projectId: string, relativePath: string): Promise<void> =>
