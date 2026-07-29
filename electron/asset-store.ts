@@ -13,7 +13,8 @@ interface AssetIndex {
 
 const MIME: Record<string, string> = {
   svg: "image/svg+xml", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
-  gif: "image/gif", webp: "image/webp", pdf: "application/pdf", html: "text/html",
+  gif: "image/gif", webp: "image/webp", avif: "image/avif", bmp: "image/bmp",
+  ico: "image/x-icon", pdf: "application/pdf", html: "text/html",
   htm: "text/html", md: "text/markdown", txt: "text/plain", json: "application/json",
   csv: "text/csv", xml: "application/xml", yaml: "application/yaml", yml: "application/yaml",
   mp3: "audio/mpeg", wav: "audio/wav", m4a: "audio/mp4", mp4: "video/mp4",
@@ -213,4 +214,47 @@ export async function emptyAssetTrash(projectId: string): Promise<void> {
     (asset) => asset.projectId !== projectId || !asset.trashed
   );
   await writeIndex(index);
+}
+
+export async function listProjectFolders(projectId: string): Promise<string[]> {
+  const root = workspaceDir(safeProjectId(projectId));
+  const folders: string[] = [""];
+  const visit = async (relative = ""): Promise<void> => {
+    let entries: import("node:fs").Dirent[] = [];
+    try { entries = await fs.readdir(path.join(root, relative), { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name === ".trash") continue;
+      const child = path.join(relative, entry.name);
+      folders.push(child);
+      await visit(child);
+    }
+  };
+  await visit();
+  return folders.sort((a, b) => a.localeCompare(b, "zh-CN"));
+}
+
+export async function createProjectFolder(projectId: string, relativePath: string): Promise<void> {
+  const clean = relativePath.trim().replace(/^[/\\]+|[/\\]+$/g, "");
+  if (!clean || clean.split(/[/\\]/).some((part) => !part || part === "." || part === "..")) {
+    throw new Error("文件夹名称无效");
+  }
+  await fs.mkdir(inProject(projectId, clean), { recursive: true });
+}
+
+export async function moveAsset(projectId: string, assetId: string, folder: string): Promise<AssetRecord> {
+  const index = await readIndex();
+  const asset = index.assets.find((entry) => entry.projectId === projectId && entry.id === assetId);
+  if (!asset || asset.trashed) throw new Error("资产不存在");
+  const nextRelative = path.join(folder, asset.name);
+  await fs.mkdir(path.dirname(inProject(projectId, nextRelative)), { recursive: true });
+  try {
+    await fs.access(inProject(projectId, nextRelative));
+    throw new Error("目标文件夹中已有同名文件");
+  } catch (error) {
+    if (error instanceof Error && error.message === "目标文件夹中已有同名文件") throw error;
+  }
+  await fs.rename(inProject(projectId, asset.relativePath), inProject(projectId, nextRelative));
+  asset.relativePath = nextRelative;
+  await writeIndex(index);
+  return asset;
 }

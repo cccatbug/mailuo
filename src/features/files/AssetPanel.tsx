@@ -5,6 +5,7 @@ import {
   FileImage,
   FileText,
   FolderOpen,
+  FolderPlus,
   Grid2x2,
   Heart,
   Import,
@@ -23,6 +24,13 @@ import { bridge } from "@/lib/bridge";
 import { useAppStore } from "@/store/useAppStore";
 import type { AssetRecord } from "@/shared/assets";
 import { openFilePanel } from "@/components/DockLayout";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 const sourceLabel = { ai: "AI 产物", attachment: "附件", import: "导入" } as const;
 
@@ -30,6 +38,53 @@ function assetIcon(asset: AssetRecord) {
   if (asset.mimeType.startsWith("image/")) return <FileImage />;
   if (asset.mimeType.startsWith("text/") || asset.mimeType.includes("json")) return <FileText />;
   return <File />;
+}
+
+function AssetThumbnail({ projectId, asset }: { projectId: string; asset: AssetRecord }) {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (!asset.mimeType.startsWith("image/")) return;
+    void bridge?.resolveAsset(projectId, asset.id)
+      .then(({ absolutePath }) => bridge!.readImageDataUrl(absolutePath, asset.mimeType))
+      .then((url) => { if (!cancelled) setSrc(url); })
+      .catch(() => { if (!cancelled) setSrc(""); });
+    return () => { cancelled = true; };
+  }, [asset.id, asset.mimeType, projectId]);
+  if (!src) return <>{assetIcon(asset)}</>;
+  return <img src={src} alt="" className="h-full w-full rounded-lg object-cover" />;
+}
+
+function TagDialog({
+  asset,
+  allTags,
+  onClose,
+  onSave,
+}: {
+  asset: AssetRecord;
+  allTags: string[];
+  onClose: () => void;
+  onSave: (tags: string[]) => void;
+}) {
+  const [value, setValue] = useState(asset.tags.join(", "));
+  const tags = value.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean);
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader><DialogTitle>管理「{asset.name}」的标签</DialogTitle></DialogHeader>
+        <Input autoFocus value={value} placeholder="输入标签，用逗号分隔" onChange={(event) => setValue(event.target.value)} />
+        <div className="flex flex-wrap gap-1">
+          {allTags.map((tag) => (
+            <Button key={tag} variant={tags.includes(tag) ? "secondary" : "outline"} size="sm" onClick={() => {
+              const next = tags.includes(tag) ? tags.filter((item) => item !== tag) : [...tags, tag];
+              setValue(next.join(", "));
+            }}>{tag}</Button>
+          ))}
+        </div>
+        <DialogFooter><Button variant="outline" onClick={onClose}>取消</Button><Button onClick={() => onSave(tags)}>保存标签</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 export async function openAsset(projectId: string, asset: AssetRecord) {
@@ -46,12 +101,23 @@ export function AssetPanel() {
   const [grid, setGrid] = useState(true);
   const [sort, setSort] = useState<"modified" | "name" | "size">("modified");
   const [loading, setLoading] = useState(false);
+  const [folders, setFolders] = useState<string[]>([""]);
+  const [folder, setFolder] = useState("all");
+  const [type, setType] = useState<"all" | "image" | "document" | "media" | "other">("all");
+  const [tag, setTag] = useState("all");
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [tagging, setTagging] = useState<AssetRecord | null>(null);
 
   const refresh = useCallback(async () => {
     if (!projectId || !bridge) return;
     setLoading(true);
     try {
-      setAssets(await bridge.listAssets(projectId));
+      const [nextAssets, nextFolders] = await Promise.all([
+        bridge.listAssets(projectId),
+        bridge.listAssetFolders(projectId),
+      ]);
+      setAssets(nextAssets);
+      setFolders(nextFolders);
     } catch (error) {
       toast.error("读取项目资产失败", { description: String(error) });
     } finally {
@@ -68,6 +134,19 @@ export function AssetPanel() {
       assets.filter((asset) => {
         if (source === "trash" ? !asset.trashed : asset.trashed) return false;
         if (source !== "all" && source !== "trash" && asset.source !== source) return false;
+        if (favoritesOnly && !asset.favorite) return false;
+        if (tag !== "all" && !asset.tags.includes(tag)) return false;
+        const normalizedPath = asset.relativePath.replace(/\\/g, "/");
+        const normalizedFolder = folder.replace(/\\/g, "/");
+        if (folder !== "all" && (folder === "" ? normalizedPath.includes("/") : !normalizedPath.startsWith(`${normalizedFolder}/`))) return false;
+        const assetType = asset.mimeType.startsWith("image/")
+          ? "image"
+          : asset.mimeType.startsWith("audio/") || asset.mimeType.startsWith("video/")
+            ? "media"
+            : asset.mimeType.startsWith("text/") || asset.mimeType.includes("pdf") || asset.mimeType.includes("json")
+              ? "document"
+              : "other";
+        if (type !== "all" && assetType !== type) return false;
         const haystack = `${asset.name} ${asset.relativePath} ${asset.tags.join(" ")}`.toLowerCase();
         return haystack.includes(query.toLowerCase());
       }).sort((a, b) =>
@@ -77,8 +156,9 @@ export function AssetPanel() {
             ? b.size - a.size
             : b.modifiedAt - a.modifiedAt
       ),
-    [assets, query, source, sort]
+    [assets, query, source, sort, favoritesOnly, tag, folder, type]
   );
+  const allTags = [...new Set(assets.flatMap((asset) => asset.tags))].sort();
 
   const mutate = async (action: () => Promise<unknown>) => {
     try {
@@ -113,9 +193,24 @@ export function AssetPanel() {
           <option value="name">按名称</option>
           <option value="size">按大小</option>
         </select>
+        <select value={type} className="h-8 rounded-md border bg-background px-2 text-xs" onChange={(event) => setType(event.target.value as typeof type)}>
+          <option value="all">全部类型</option><option value="image">图片</option><option value="document">文档</option><option value="media">音视频</option><option value="other">其他</option>
+        </select>
+        <select value={folder} className="h-8 max-w-40 rounded-md border bg-background px-2 text-xs" onChange={(event) => setFolder(event.target.value)}>
+          <option value="all">全部文件夹</option>
+          {folders.map((item) => <option key={item || "root"} value={item}>{item || "项目根目录"}</option>)}
+        </select>
+        <select value={tag} className="h-8 max-w-32 rounded-md border bg-background px-2 text-xs" onChange={(event) => setTag(event.target.value)}>
+          <option value="all">全部标签</option>{allTags.map((item) => <option key={item} value={item}>{item}</option>)}
+        </select>
+        <Button variant={favoritesOnly ? "secondary" : "ghost"} size="icon-sm" title="只看收藏" onClick={() => setFavoritesOnly((value) => !value)}><Heart className={favoritesOnly ? "fill-primary text-primary" : ""} /></Button>
         <Button variant="ghost" size="icon-sm" title="刷新" disabled={loading} onClick={() => void refresh()}><RefreshCw className={loading ? "animate-spin" : ""} /></Button>
         <Button variant="ghost" size="icon-sm" title={grid ? "列表视图" : "网格视图"} onClick={() => setGrid((value) => !value)}>{grid ? <List /> : <Grid2x2 />}</Button>
         <Button variant="outline" size="sm" onClick={() => void mutate(() => bridge!.importAssets(projectId))}><Import />导入</Button>
+        <Button variant="outline" size="sm" onClick={() => {
+          const name = window.prompt("新文件夹名称（可输入 设计/终稿 这样的层级）");
+          if (name) void mutate(() => bridge!.createAssetFolder(projectId, name));
+        }}><FolderPlus />新建文件夹</Button>
         {source === "trash" && visible.length > 0 && (
           <Button variant="outline" size="sm" className="text-destructive" onClick={() => {
             if (window.confirm("永久清空当前项目回收站？此操作不可恢复。")) void mutate(() => bridge!.emptyAssetTrash(projectId));
@@ -130,7 +225,7 @@ export function AssetPanel() {
             onDoubleClick={() => void openAsset(projectId, asset)}
           >
             <button className={cn("text-primary [&_svg]:size-6", grid ? "mb-3 flex size-12 items-center justify-center rounded-lg bg-primary/8" : "")} onClick={() => void openAsset(projectId, asset)}>
-              {assetIcon(asset)}
+              <AssetThumbnail projectId={projectId} asset={asset} />
             </button>
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium">{asset.name}</p>
@@ -146,10 +241,16 @@ export function AssetPanel() {
                   <Button variant="ghost" size="icon-sm" title="收藏" onClick={() => void mutate(() => bridge!.updateAsset(projectId, asset.id, { favorite: !asset.favorite }))}>
                     <Heart className={asset.favorite ? "fill-primary text-primary" : ""} />
                   </Button>
-                  <Button variant="ghost" size="icon-sm" title="标签" onClick={() => {
-                    const tags = window.prompt("标签（用逗号分隔）", asset.tags.join(", "));
-                    if (tags !== null) void mutate(() => bridge!.updateAsset(projectId, asset.id, { tags: tags.split(/[,，]/) }));
-                  }}><Tags /></Button>
+                  <Button variant="ghost" size="icon-sm" title="标签" onClick={() => setTagging(asset)}><Tags /></Button>
+                  <select
+                    aria-label={`移动 ${asset.name}`}
+                    title="移动到文件夹"
+                    className="h-7 max-w-24 rounded border bg-background px-1 text-[10px]"
+                    value={asset.relativePath.replace(/[/\\][^/\\]+$/, "") === asset.relativePath ? "" : asset.relativePath.replace(/[/\\][^/\\]+$/, "")}
+                    onChange={(event) => void mutate(() => bridge!.moveAsset(projectId, asset.id, event.target.value))}
+                  >
+                    {folders.map((item) => <option key={item || "root"} value={item}>{item || "根目录"}</option>)}
+                  </select>
                   <Button variant="ghost" size="icon-sm" title="重命名" onClick={() => {
                     const name = window.prompt("新文件名", asset.name);
                     if (name && name !== asset.name) void mutate(() => bridge!.updateAsset(projectId, asset.id, { name }));
@@ -167,6 +268,14 @@ export function AssetPanel() {
           <div className="col-span-full flex min-h-48 items-center justify-center text-sm text-muted-foreground">没有匹配的项目资产</div>
         )}
       </div>
+      {tagging && (
+        <TagDialog
+          asset={tagging}
+          allTags={allTags}
+          onClose={() => setTagging(null)}
+          onSave={(tags) => void mutate(() => bridge!.updateAsset(projectId, tagging.id, { tags })).then(() => setTagging(null))}
+        />
+      )}
     </div>
   );
 }

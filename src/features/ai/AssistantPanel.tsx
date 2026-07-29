@@ -250,7 +250,8 @@ async function sendMessage(
   skillNames: string[],
   attachments: ComposerAttachment[]
   ,
-  assetRefs: AssetRecord[]
+  assetRefs: AssetRecord[],
+  browserContext = ""
 ): Promise<boolean> {
   const store = useAppStore.getState();
   const projectId = store.selectedProjectId;
@@ -330,7 +331,7 @@ async function sendMessage(
   void completeAssistantTurn({
     agentText,
     attachmentPayloads,
-    mentionContext: `${mentionContext}${assetContext}`,
+    mentionContext: `${mentionContext}${assetContext}${browserContext}`,
     projectId,
     skillNames,
     staleContext,
@@ -714,6 +715,34 @@ export function AssistantPanel() {
     window.addEventListener("mailuo-ai-runtime-changed", onRuntimeChanged);
     return () =>
       window.removeEventListener("mailuo-ai-runtime-changed", onRuntimeChanged);
+  }, []);
+
+  useEffect(() => {
+    type BrowserAsk = {
+      prompt: string;
+      page: { title: string; url: string; text: string };
+    };
+    const runBrowserAsk = (detail: BrowserAsk | undefined) => {
+      if (!detail?.page || useChat.getState().busy) {
+        if (useChat.getState().busy) toast.error("小枢正在处理上一条消息");
+        return;
+      }
+      const context = `\n\n【当前内置浏览器网页】\n标题：${detail.page.title}\n网址：${detail.page.url}\n正文：\n${detail.page.text}`;
+      void sendMessage(detail.prompt, [], [], [], [], context);
+    };
+    const handleBrowserAsk = (event: Event) => {
+      const detail = (event as CustomEvent<BrowserAsk>).detail;
+      delete (window as Window & { __mailuoPendingBrowserAsk?: BrowserAsk }).__mailuoPendingBrowserAsk;
+      runBrowserAsk(detail);
+    };
+    window.addEventListener("mailuo:browser-ask-shu", handleBrowserAsk);
+    const pendingWindow = window as Window & { __mailuoPendingBrowserAsk?: BrowserAsk };
+    if (pendingWindow.__mailuoPendingBrowserAsk) {
+      const pending = pendingWindow.__mailuoPendingBrowserAsk;
+      delete pendingWindow.__mailuoPendingBrowserAsk;
+      runBrowserAsk(pending);
+    }
+    return () => window.removeEventListener("mailuo:browser-ask-shu", handleBrowserAsk);
   }, []);
 
   const applyOps = (idx: number) => {

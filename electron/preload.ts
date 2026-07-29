@@ -141,6 +141,12 @@ const api = {
     ipcRenderer.invoke("assets:reveal", projectId, assetId),
   clearBrowserData: (): Promise<void> =>
     ipcRenderer.invoke("browser:clear-data"),
+  listAssetFolders: (projectId: string): Promise<string[]> =>
+    ipcRenderer.invoke("assets:folders", projectId),
+  createAssetFolder: (projectId: string, relativePath: string): Promise<void> =>
+    ipcRenderer.invoke("assets:create-folder", projectId, relativePath),
+  moveAsset: (projectId: string, assetId: string, folder: string): Promise<AssetRecord> =>
+    ipcRenderer.invoke("assets:move", projectId, assetId, folder),
 
   onAssistantEvent: (
     handler: (requestId: string, event: AssistantEventPayload) => void

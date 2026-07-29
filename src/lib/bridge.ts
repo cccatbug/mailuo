@@ -104,6 +104,9 @@ export interface MailuoApi {
   importAssets: (projectId: string) => Promise<AssetRecord[]>;
   revealAsset: (projectId: string, assetId: string) => Promise<void>;
   clearBrowserData: () => Promise<void>;
+  listAssetFolders: (projectId: string) => Promise<string[]>;
+  createAssetFolder: (projectId: string, relativePath: string) => Promise<void>;
+  moveAsset: (projectId: string, assetId: string, folder: string) => Promise<AssetRecord>;
   onAssistantEvent: (
     handler: (requestId: string, event: AssistantEventPayload) => void
   ) => () => void;

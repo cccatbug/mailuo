@@ -616,6 +616,12 @@ export function DockLayout() {
       rightHeaderActionsComponent={HeaderActions}
       watermarkComponent={Watermark}
       onReady={onReady}
+      getTabContextMenuItems={() => [
+        "close",
+        "closeOthers",
+        "separator",
+        "closeAll",
+      ]}
       floatingGroupBounds="boundedWithinViewport"
     />
   );

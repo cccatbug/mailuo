@@ -74,6 +74,9 @@ const SAFE_IMAGE_MIME_TYPES = new Set([
   "image/png",
   "image/webp",
   "image/svg+xml",
+  "image/avif",
+  "image/bmp",
+  "image/x-icon",
 ]);
 
 /** 为工作区图片生成渲染用 data URL；路径和 MIME 均由主进程再次校验。 */
@@ -320,6 +323,9 @@ function detectImageMimeType(bytes: Uint8Array): string | null {
   }
   if (ascii("GIF")) return "image/gif";
   if (ascii("RIFF") && ascii("WEBP", 8)) return "image/webp";
+  if (ascii("BM")) return "image/bmp";
+  if (startsWith([0x00, 0x00, 0x01, 0x00])) return "image/x-icon";
+  if (ascii("ftyp", 4) && (ascii("avif", 8) || ascii("avis", 8))) return "image/avif";
   return null;
 }
 

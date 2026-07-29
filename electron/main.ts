@@ -54,6 +54,9 @@ import {
   restoreAsset,
   trashAsset,
   updateAsset,
+  createProjectFolder,
+  listProjectFolders,
+  moveAsset,
 } from "./asset-store";
 
 const isMac = process.platform === "darwin";
@@ -269,6 +272,15 @@ function registerIpc() {
     const { absolutePath } = await resolveAsset(projectId, assetId);
     shell.showItemInFolder(absolutePath);
   });
+  ipcMain.handle("assets:folders", (_e, projectId: string) =>
+    listProjectFolders(projectId)
+  );
+  ipcMain.handle("assets:create-folder", (_e, projectId: string, relativePath: string) =>
+    createProjectFolder(projectId, relativePath)
+  );
+  ipcMain.handle("assets:move", (_e, projectId: string, assetId: string, folder: string) =>
+    moveAsset(projectId, assetId, folder)
+  );
   ipcMain.handle("browser:clear-data", async () => {
     const browserSession = session.fromPartition(BROWSER_PARTITION);
     await Promise.all([

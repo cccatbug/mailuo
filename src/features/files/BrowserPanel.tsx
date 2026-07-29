@@ -15,9 +15,8 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Md } from "@/features/ai/Markdown";
-import { assistantSend } from "@/lib/ai";
 import { bridge } from "@/lib/bridge";
+import { useAppStore } from "@/store/useAppStore";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -72,7 +71,6 @@ export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
   const [canForward, setCanForward] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [asking, setAsking] = useState(false);
-  const [answer, setAnswer] = useState("");
   const [question, setQuestion] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -131,8 +129,10 @@ export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
     const view = webviewRef.current;
     if (!view || asking) return;
     setAsking(true);
-    setAnswer("");
     try {
+      if (!useAppStore.getState().selectedProjectId) {
+        throw new Error("请先选择一个项目，再把网页交给小枢");
+      }
       const page = await view.executeJavaScript<{
         title: string;
         url: string;
@@ -143,17 +143,21 @@ export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
         preset ||
         question.trim() ||
         "请提炼这篇网页最重要的信息，并列出关键事实和可执行结论。";
-      await assistantSend(
-        `你是网页阅读助手“小枢”。请严格依据下方网页内容回答，不确定的信息要明确说明。\n\n任务：${request}\n\n标题：${page.title}\n网址：${page.url}\n\n网页正文：\n${page.text}`,
-        "browser",
-        [],
-        {},
-        null,
-        (event) => {
-          if (event.type === "delta") setAnswer((text) => text + event.text);
-        }
+      useAppStore.getState().setAssistantOpen(true);
+      (window as Window & { __mailuoPendingBrowserAsk?: unknown }).__mailuoPendingBrowserAsk = {
+        prompt: request,
+        page,
+      };
+      window.dispatchEvent(
+        new CustomEvent("mailuo:browser-ask-shu", {
+          detail: { prompt: request, page },
+        })
       );
       setQuestion("");
+      setAssistantOpen(false);
+      toast.success("已交给当前项目的小枢", {
+        description: "网页内容、项目上下文、资产和记忆会在同一会话中使用。",
+      });
     } catch (error) {
       toast.error("小枢读取网页失败", { description: String(error) });
     } finally {
@@ -268,11 +272,10 @@ export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
             ))}
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-3 text-sm">
-            {answer ? <Md text={answer} /> : (
-              <div className="flex h-full items-center justify-center text-center text-xs text-muted-foreground">
-                小枢可以总结、提取或回答当前网页的问题
-              </div>
-            )}
+            <div className="flex h-full items-center justify-center text-center text-xs leading-relaxed text-muted-foreground">
+              当前网页会作为上下文发送给应用外围的小枢。<br />
+              小枢仍可使用当前项目任务、资产、记忆、模型和 Agent 工具。
+            </div>
           </div>
           <form
             className="flex gap-2 border-t p-2"
