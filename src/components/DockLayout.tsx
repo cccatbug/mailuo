@@ -52,6 +52,8 @@ import { FileEditor } from "@/features/files/FileEditor";
 import { BrowserPanel } from "@/features/files/BrowserPanel";
 import { AssetPanel } from "@/features/files/AssetPanel";
 import { useAppStore, type ViewMode } from "@/store/useAppStore";
+import { bridge } from "@/lib/bridge";
+import type { BrowserTab } from "../../electron/browser-runtime";
 
 const LAYOUT_KEY = "mailuo-dock-v1";
 
@@ -80,6 +82,12 @@ const components: Record<string, React.FunctionComponent<IDockviewPanelProps>> =
       initialUrl={
         typeof props.params?.url === "string" ? props.params.url : undefined
       }
+      tabId={
+        typeof props.params?.tabId === "string"
+          ? props.params.tabId
+          : undefined
+      }
+      onTitleChange={(title) => props.api.setTitle(title)}
     />
   ),
   assets: () => <AssetPanel />,
@@ -138,16 +146,24 @@ export function openFilePanel(
 }
 
 /** 打开基于 Electron Chromium webview 的原生网页标签。 */
-export function openBrowserPanel(url = "https://www.google.com") {
+export function openBrowserPanel(
+  url = "https://www.google.com",
+  tabId: string = crypto.randomUUID()
+) {
   const api = dockRef.api;
   if (!api) return;
-  const id = `browser:${crypto.randomUUID()}`;
+  const id = `browser:${tabId}`;
+  const existing = api.getPanel(id);
+  if (existing) {
+    existing.api.setActive();
+    return;
+  }
   api.addPanel({
     id,
     component: "browser",
     title: "浏览器",
     minimumWidth: 420,
-    params: { url },
+    params: { url, tabId },
     position: {
       referencePanel: api.getPanel("tasks") ? "tasks" : undefined as never,
       direction: "within",
@@ -442,6 +458,7 @@ const g = globalThis as unknown as {
 };
 g.__mailuoDock ??= { api: null };
 const dockRef = g.__mailuoDock;
+let activeRuntimeTabId: string | null = null;
 
 // 每次模块求值（含 HMR）都刷新处理器，事件订阅只调用指针，避免旧闭包复活
 dockRef.handleRemove = (panelId: string) => {
@@ -468,6 +485,37 @@ function buildDefaultLayout(api: DockviewApi) {
   });
   api.getPanel("detail")?.api.setSize({ width: 310 });
   api.getPanel("tasks")?.api.setActive();
+}
+
+function syncBrowserPanels(tabs: BrowserTab[]) {
+  const api = dockRef.api;
+  if (!api) return;
+  const ids = new Set(tabs.map((tab) => `browser:${tab.tabId}`));
+  activeRuntimeTabId = tabs.find((tab) => tab.active)?.tabId ?? null;
+  internalOp = true;
+  try {
+    for (const tab of tabs) {
+      const id = `browser:${tab.tabId}`;
+      let panel = api.getPanel(id);
+      if (!panel) {
+        openBrowserPanel(tab.url, tab.tabId);
+        panel = api.getPanel(id);
+      }
+      panel?.api.setTitle(tab.title || tab.url);
+      if (tab.active) panel?.api.setActive();
+    }
+    for (const panel of api.panels) {
+      if (
+        panel.id.startsWith("browser:") &&
+        !ids.has(panel.id) &&
+        typeof panel.params?.tabId === "string"
+      ) {
+        panel.api.close();
+      }
+    }
+  } finally {
+    internalOp = false;
+  }
 }
 
 /** 按 store 状态增删面板（幂等） */
@@ -577,6 +625,10 @@ export function DockLayout() {
     if (!restored || event.api.panels.length === 0) {
       buildDefaultLayout(event.api);
     }
+    if (bridge) {
+      void bridge.listBrowserTabs().then(syncBrowserPanels);
+      bridge.onBrowserTabs(syncBrowserPanels);
+    }
 
     // 恢复后的面板存在性 → 回写 store 开关
     const store = useAppStore.getState();
@@ -594,9 +646,27 @@ export function DockLayout() {
       }, 300);
     });
 
+    event.api.onDidActivePanelChange(({ panel }) => {
+      if (!panel?.id.startsWith("browser:")) return;
+      const tabId =
+        typeof panel.params?.tabId === "string"
+          ? panel.params.tabId
+          : panel.id.slice("browser:".length);
+      if (tabId === activeRuntimeTabId) return;
+      activeRuntimeTabId = tabId;
+      void bridge?.activateBrowserTab(tabId);
+    });
+
     // 用户通过 tab 关闭面板 → 回写 store（经全局指针，HMR 后始终指向最新逻辑）
     event.api.onDidRemovePanel((panel) => {
       if (internalOp) return;
+      if (panel.id.startsWith("browser:")) {
+        const tabId =
+          typeof panel.params?.tabId === "string"
+            ? panel.params.tabId
+            : panel.id.slice("browser:".length);
+        void bridge?.closeBrowserTab(tabId);
+      }
       dockRef.handleRemove?.(panel.id);
     });
   };

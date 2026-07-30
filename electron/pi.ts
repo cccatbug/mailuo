@@ -10,6 +10,7 @@ import {
   type AgentSession,
   type AgentSessionEvent,
 } from "@earendil-works/pi-coding-agent";
+import { BROWSER_AGENT_TOOLS, BROWSER_TOOL_NAMES } from "./browser-tools";
 import type { ImageContent } from "@earendil-works/pi-ai/compat";
 import type {
   AssistantAttachmentMeta,
@@ -27,6 +28,11 @@ import {
   type ResolvedAiRoute,
 } from "./ai-runtime";
 import { AgentTurnAccumulator } from "./agent-turn";
+import {
+  LayeredMemoryStore,
+  type MemoryEntry,
+  type MemoryKind,
+} from "./memory-store";
 import { assembleAiContext } from "./context-assembly";
 import {
   ASSISTANT_SYSTEM_PROMPT,
@@ -48,7 +54,7 @@ export function workspaceDir(projectId: string): string {
 }
 
 export function memoryPath(): string {
-  return path.join(MAILUO_HOME, "memory.md");
+  return path.join(MAILUO_HOME, "memory.json");
 }
 
 /** 限制文件访问在 ~/.mailuo 内 */
@@ -129,18 +135,131 @@ export async function writeMailuoFile(p: string, content: string): Promise<void>
 }
 
 export async function appendMemory(note: string): Promise<void> {
-  const file = memoryPath();
-  await fs.mkdir(path.dirname(file), { recursive: true });
-  const stamp = new Date().toISOString().slice(0, 10);
-  await fs.appendFile(file, `- (${stamp}) ${note.trim()}\n`, "utf8");
+  const store = await loadMemoryStore();
+  store.upsert({
+    kind: "fact",
+    key: note.trim().slice(0, 80),
+    value: note.trim(),
+    evidence: "小枢显式 remember 操作",
+    confidence: 1,
+  });
+  await saveMemoryStore(store);
 }
 
-async function readMemory(): Promise<string> {
+async function readMemory(projectId?: string): Promise<string> {
+  return (await loadMemoryStore()).context(projectId);
+}
+
+async function loadMemoryStore(): Promise<LayeredMemoryStore> {
   try {
-    return await fs.readFile(memoryPath(), "utf8");
+    const parsed = JSON.parse(await fs.readFile(memoryPath(), "utf8")) as {
+      enabled?: boolean;
+      entries?: MemoryEntry[];
+    };
+    const store = new LayeredMemoryStore(parsed.entries ?? []);
+    store.enabled = parsed.enabled ?? true;
+    return store;
   } catch {
-    return "";
+    // 兼容旧版 append-only Markdown；首次写入后迁移为结构化存储。
+    try {
+      const legacy = await fs.readFile(path.join(MAILUO_HOME, "memory.md"), "utf8");
+      const store = new LayeredMemoryStore();
+      for (const [index, line] of legacy.split("\n").entries()) {
+        const value = line.replace(/^-\s*(?:\([^)]+\)\s*)?/, "").trim();
+        if (value) {
+          store.upsert({
+            kind: "fact",
+            key: `legacy-${index + 1}`,
+            value,
+            evidence: "旧版 memory.md 迁移",
+            confidence: 1,
+          });
+        }
+      }
+      return store;
+    } catch {
+      return new LayeredMemoryStore();
+    }
   }
+}
+
+async function saveMemoryStore(store: LayeredMemoryStore) {
+  const file = memoryPath();
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const temp = `${file}.tmp`;
+  await fs.writeFile(
+    temp,
+    JSON.stringify(
+      { version: 1, enabled: store.enabled, entries: store.list({ includeSuperseded: true }) },
+      null,
+      2
+    ),
+    "utf8"
+  );
+  await fs.rename(temp, file);
+}
+
+export async function listMemory(includeSuperseded = false) {
+  const store = await loadMemoryStore();
+  return {
+    enabled: store.enabled,
+    entries: store.list({ includeSuperseded }),
+  };
+}
+
+export async function setMemoryEnabled(enabled: boolean) {
+  const store = await loadMemoryStore();
+  store.enabled = enabled;
+  await saveMemoryStore(store);
+  return listMemory();
+}
+
+export async function updateMemory(
+  id: string,
+  patch: Partial<Pick<MemoryEntry, "key" | "value" | "evidence" | "confidence">>
+) {
+  const store = await loadMemoryStore();
+  const entry = store.update(id, patch);
+  await saveMemoryStore(store);
+  return entry;
+}
+
+export async function deleteMemory(id: string) {
+  const store = await loadMemoryStore();
+  store.remove(id);
+  await saveMemoryStore(store);
+}
+
+export async function rebuildMemory() {
+  const store = await loadMemoryStore();
+  store.rebuild(store.list());
+  await saveMemoryStore(store);
+  return listMemory();
+}
+
+async function extractExplicitMemory(message: string, projectId: string) {
+  const cues: Array<{ pattern: RegExp; kind: MemoryKind }> = [
+    { pattern: /(?:请)?记住[：,:，]?\s*(.+)$/m, kind: "fact" },
+    { pattern: /我(?:更)?喜欢[：,:，]?\s*(.+)$/m, kind: "preference" },
+    { pattern: /这个项目(?:使用|采用|决定)[：,:，]?\s*(.+)$/m, kind: "project" },
+  ];
+  const store = await loadMemoryStore();
+  if (!store.enabled) return;
+  let changed = false;
+  for (const cue of cues) {
+    const value = cue.pattern.exec(message)?.[1]?.trim();
+    if (!value) continue;
+    store.upsert({
+      kind: cue.kind,
+      key: value.slice(0, 80),
+      value,
+      ...(cue.kind === "project" ? { projectId } : {}),
+      evidence: "用户本轮明确表达",
+      confidence: 1,
+    });
+    changed = true;
+  }
+  if (changed) await saveMemoryStore(store);
 }
 
 /* ---------- skills（~/.mailuo/ai/skills，SKILL.md 带 frontmatter） ---------- */
@@ -250,7 +369,10 @@ async function makeSession(
     settingsManager,
     resourceLoader,
     // 纯任务型调用不开工具；小枢会话开放安全内建工具
-    tools: opts.withTools ? ["read", "bash", "edit", "write", "grep", "find", "ls"] : [],
+    tools: opts.withTools
+      ? ["read", "bash", "edit", "write", "grep", "find", "ls", ...BROWSER_TOOL_NAMES]
+      : [],
+    customTools: opts.withTools ? BROWSER_AGENT_TOOLS : [],
   });
   return session;
 }
@@ -259,7 +381,8 @@ async function buildPrompt(
   resolved: ResolvedAiRoute,
   baseSystemPrompt: string,
   userMessage: string,
-  requestContext?: AiRequestContext
+  requestContext?: AiRequestContext,
+  projectId?: string
 ): Promise<{ systemPrompt: string; message: string }> {
   const skillNames = requestContext?.skillNames ?? [];
   const skills =
@@ -267,7 +390,7 @@ async function buildPrompt(
       ? (await listSkills()).filter((skill) => skillNames.includes(skill.name))
       : [];
   const memory = resolved.contextProfile.sources.longTermMemory.enabled
-    ? await readMemory()
+    ? await readMemory(projectId)
     : "";
   return assembleAiContext({
     profile: resolved.contextProfile,
@@ -513,7 +636,8 @@ export async function assistantSend(
     resolved,
     ASSISTANT_SYSTEM_PROMPT,
     message,
-    requestContext
+    requestContext,
+    projectId
   );
   const key = configKey(resolved, assembled.systemPrompt, cwd);
   if (assistant && assistant.key !== key) {
@@ -602,6 +726,8 @@ export async function assistantSend(
       });
     }
     emit({ type: "done" });
+    // 不阻塞回复；明确记忆信号在本轮完成后立即进入结构化存储。
+    void extractExplicitMemory(message, projectId).catch(() => undefined);
   } catch (err) {
     assistantReset();
     const msg = err instanceof Error ? err.message : String(err);

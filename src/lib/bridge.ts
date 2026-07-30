@@ -21,6 +21,8 @@ import type {
   AssetTagMode,
   AssetTagRecord,
 } from "@/shared/assets";
+import type { BrowserTab } from "../../electron/browser-runtime";
+import type { MemoryEntry } from "../../electron/memory-store";
 
 export interface BrowserSessionSnapshot {
   persistent: boolean;
@@ -108,6 +110,11 @@ export interface MailuoApi {
   writeFile: (p: string, content: string) => Promise<void>;
   memoryPath: () => Promise<string>;
   memoryAppend: (note: string) => Promise<void>;
+  listMemory: (includeSuperseded?: boolean) => Promise<{ enabled: boolean; entries: MemoryEntry[] }>;
+  setMemoryEnabled: (enabled: boolean) => Promise<{ enabled: boolean; entries: MemoryEntry[] }>;
+  updateMemory: (id: string, patch: Partial<MemoryEntry>) => Promise<MemoryEntry>;
+  deleteMemory: (id: string) => Promise<void>;
+  rebuildMemory: () => Promise<{ enabled: boolean; entries: MemoryEntry[] }>;
   workspaceDir: (projectId: string) => Promise<string>;
   listAssets: (projectId: string) => Promise<AssetRecord[]>;
   resolveAsset: (projectId: string, assetId: string) => Promise<{ asset: AssetRecord; absolutePath: string }>;
@@ -122,6 +129,13 @@ export interface MailuoApi {
   importAssets: (projectId: string) => Promise<AssetRecord[]>;
   revealAsset: (projectId: string, assetId: string) => Promise<void>;
   getBrowserSession: () => Promise<BrowserSessionSnapshot>;
+  listBrowserTabs: () => Promise<BrowserTab[]>;
+  activateBrowserTab: (tabId: string) => Promise<void>;
+  closeBrowserTab: (tabId: string) => Promise<void>;
+  browserTabForContents: (contentsId: number, tabId?: string) => Promise<string | null>;
+  suggestBrowserAddress: (query: string) => Promise<unknown[]>;
+  recordBrowserSearch: (query: string) => Promise<void>;
+  onBrowserTabs: (handler: (tabs: BrowserTab[]) => void) => () => void;
   flushBrowserSession: () => Promise<void>;
   openBrowserStorage: () => Promise<string>;
   importBrowserCookies: () => Promise<BrowserCookieImportResult | null>;
@@ -129,7 +143,9 @@ export interface MailuoApi {
     handler: (event: { state: string; filename: string; path: string }) => void
   ) => () => void;
   openBrowserDownload: (filePath: string) => Promise<string>;
-  onBrowserOpenTab: (handler: (url: string) => void) => () => void;
+  onBrowserOpenTab: (
+    handler: (request: string | { url: string; tabId?: string }) => void
+  ) => () => void;
   clearBrowserData: (scope?: "cookies" | "all") => Promise<void>;
   listAssetFolders: (projectId: string) => Promise<string[]>;
   createAssetFolder: (projectId: string, relativePath: string) => Promise<void>;

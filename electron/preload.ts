@@ -22,6 +22,8 @@ import type {
   AssetTagMode,
   AssetTagRecord,
 } from "../src/shared/assets";
+import type { BrowserTab } from "./browser-runtime";
+import type { MemoryEntry } from "./memory-store";
 
 const api = {
   platform: process.platform as NodeJS.Platform,
@@ -123,6 +125,15 @@ const api = {
   memoryPath: (): Promise<string> => ipcRenderer.invoke("mailuo:memory-path"),
   memoryAppend: (note: string): Promise<void> =>
     ipcRenderer.invoke("mailuo:memory-append", note),
+  listMemory: (includeSuperseded = false): Promise<{ enabled: boolean; entries: MemoryEntry[] }> =>
+    ipcRenderer.invoke("mailuo:memory-list", includeSuperseded),
+  setMemoryEnabled: (enabled: boolean) =>
+    ipcRenderer.invoke("mailuo:memory-enabled", enabled),
+  updateMemory: (id: string, patch: Partial<MemoryEntry>): Promise<MemoryEntry> =>
+    ipcRenderer.invoke("mailuo:memory-update", id, patch),
+  deleteMemory: (id: string): Promise<void> =>
+    ipcRenderer.invoke("mailuo:memory-delete", id),
+  rebuildMemory: () => ipcRenderer.invoke("mailuo:memory-rebuild"),
   workspaceDir: (projectId: string): Promise<string> =>
     ipcRenderer.invoke("mailuo:workspace-dir", projectId),
   listAssets: (projectId: string): Promise<AssetRecord[]> =>
@@ -146,6 +157,23 @@ const api = {
     ipcRenderer.invoke("assets:reveal", projectId, assetId),
   getBrowserSession: () =>
     ipcRenderer.invoke("browser:session:snapshot"),
+  listBrowserTabs: (): Promise<BrowserTab[]> =>
+    ipcRenderer.invoke("browser:tabs:list"),
+  activateBrowserTab: (tabId: string): Promise<void> =>
+    ipcRenderer.invoke("browser:tabs:activate", tabId),
+  closeBrowserTab: (tabId: string): Promise<void> =>
+    ipcRenderer.invoke("browser:tabs:close", tabId),
+  browserTabForContents: (contentsId: number, tabId?: string): Promise<string | null> =>
+    ipcRenderer.invoke("browser:tabs:for-contents", contentsId, tabId),
+  suggestBrowserAddress: (query: string): Promise<unknown[]> =>
+    ipcRenderer.invoke("browser:history:suggest", query),
+  recordBrowserSearch: (query: string): Promise<void> =>
+    ipcRenderer.invoke("browser:history:record-search", query),
+  onBrowserTabs: (handler: (tabs: BrowserTab[]) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, tabs: BrowserTab[]) => handler(tabs);
+    ipcRenderer.on("browser:tabs", listener);
+    return () => ipcRenderer.removeListener("browser:tabs", listener);
+  },
   flushBrowserSession: (): Promise<void> =>
     ipcRenderer.invoke("browser:session:flush"),
   openBrowserStorage: (): Promise<string> =>
@@ -164,8 +192,13 @@ const api = {
   },
   openBrowserDownload: (filePath: string): Promise<string> =>
     ipcRenderer.invoke("browser:download:open", filePath),
-  onBrowserOpenTab: (handler: (url: string) => void): (() => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, url: string) => handler(url);
+  onBrowserOpenTab: (
+    handler: (request: string | { url: string; tabId?: string }) => void
+  ): (() => void) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      request: string | { url: string; tabId?: string }
+    ) => handler(request);
     ipcRenderer.on("browser:open-tab", listener);
     return () => ipcRenderer.removeListener("browser:open-tab", listener);
   },

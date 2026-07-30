@@ -4,6 +4,7 @@ import {
   dialog,
   ipcMain,
   shell,
+  webContents,
 } from "electron";
 import { promises as fs } from "node:fs";
 import os from "node:os";
@@ -16,7 +17,12 @@ import {
   assistantSend,
   listModels,
   listSkills,
+  listMemory,
   memoryPath,
+  setMemoryEnabled,
+  updateMemory,
+  deleteMemory,
+  rebuildMemory,
   readMailuoFile,
   readMailuoImageDataUrl,
   readMailuoDataUrl,
@@ -73,12 +79,93 @@ import {
   BROWSER_SESSION,
   isExternalBrowserProtocol,
 } from "./browser-session";
+import {
+  BROWSER_RUNTIME,
+  electronBrowserPage,
+  setBrowserTabRequestHandler,
+} from "./browser-tools";
+
+const browserContentsTabs = new Map<number, string>();
+
+function publishBrowserTabs() {
+  win?.webContents.send("browser:tabs", BROWSER_RUNTIME.listTabs());
+}
+
+function attachBrowserContents(contents: Electron.WebContents) {
+  if (browserContentsTabs.has(contents.id)) return;
+  const url = contents.getURL() || "about:blank";
+  const restored = BROWSER_RUNTIME.listTabs().find(
+    (candidate) => !candidate.attached && candidate.url === url
+  );
+  const tab = restored
+    ? (BROWSER_RUNTIME.attachPage(restored.tabId, electronBrowserPage(contents)),
+      BROWSER_RUNTIME.getTab(restored.tabId)!)
+    : BROWSER_RUNTIME.createTab({
+        url,
+        title: contents.getTitle() || "新标签页",
+        page: electronBrowserPage(contents),
+      });
+  browserContentsTabs.set(contents.id, tab.tabId);
+  attachBrowserMetadata(contents, tab.tabId);
+  publishBrowserTabs();
+}
+
+function attachBrowserMetadata(
+  contents: Electron.WebContents,
+  tabId: string
+) {
+  const update = (patch: Parameters<typeof BROWSER_RUNTIME.updateTab>[1]) => {
+    if (BROWSER_RUNTIME.getTab(tabId)) BROWSER_RUNTIME.updateTab(tabId, patch);
+  };
+  contents.on("page-title-updated", (_event, title) => update({ title }));
+  contents.on("page-favicon-updated", (_event, favicons) => update({ favicon: favicons[0] }));
+  contents.on("did-start-loading", () => update({ loading: true, error: undefined }));
+  contents.on("did-stop-loading", () =>
+    update({
+      loading: false,
+      url: contents.getURL(),
+      title: contents.getTitle() || contents.getURL(),
+    })
+  );
+  contents.on("did-navigate-in-page", (_event, url, isMainFrame) => {
+    if (isMainFrame) update({ url });
+  });
+  contents.on("did-fail-load", (_event, code, description, url, isMainFrame) => {
+    if (isMainFrame && code !== -3) update({ loading: false, error: description, url });
+  });
+  contents.on("media-started-playing", () => update({ audible: true }));
+  contents.on("media-paused", () => update({ audible: false }));
+  contents.once("destroyed", () => {
+    browserContentsTabs.delete(contents.id);
+    if (BROWSER_RUNTIME.getTab(tabId)) BROWSER_RUNTIME.closeTab(tabId);
+  });
+}
 
 const isMac = process.platform === "darwin";
 
 /* ---------- 数据持久化（原子写入 + 旧 Tauri 数据迁移） ---------- */
 
 const dataFile = () => path.join(app.getPath("userData"), "mailuo.json");
+const browserStateFile = () =>
+  path.join(app.getPath("userData"), "browser-tabs.json");
+
+async function loadBrowserState() {
+  try {
+    BROWSER_RUNTIME.hydrate(
+      JSON.parse(await fs.readFile(browserStateFile(), "utf8"))
+    );
+  } catch {
+    // 首次启动或崩溃后的无效快照：从空白会话开始。
+  }
+}
+
+async function saveBrowserState() {
+  const file = browserStateFile();
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const temporary = `${file}.tmp`;
+  await fs.writeFile(temporary, JSON.stringify(BROWSER_RUNTIME.snapshot(), null, 2));
+  await fs.rename(temporary, file);
+}
 
 /** 老版本（Tauri 壳）的数据位置 */
 function tauriDataFile(): string {
@@ -311,6 +398,59 @@ function registerIpc() {
     ) => assignAssetTags(projectId, assetIds, tagNames, mode)
   );
   ipcMain.handle("browser:session:snapshot", () => BROWSER_SESSION.snapshot());
+  ipcMain.handle("browser:tabs:list", () => BROWSER_RUNTIME.listTabs());
+  ipcMain.handle("browser:tabs:activate", (_event, tabId: string) =>
+    BROWSER_RUNTIME.activateTab(tabId)
+  );
+  ipcMain.handle("browser:tabs:close", (_event, tabId: string) => {
+    if (BROWSER_RUNTIME.getTab(tabId)) BROWSER_RUNTIME.closeTab(tabId);
+  });
+  ipcMain.handle("browser:tabs:for-contents", (event, contentsId: number, requestedTabId?: string) => {
+    const contents = webContents.fromId(contentsId);
+    if (
+      event.sender !== win?.webContents ||
+      !contents ||
+      contents.getType() !== "webview" ||
+      contents.session !== BROWSER_SESSION.electronSession
+    ) {
+      throw new Error("只能注册内置浏览器 WebContents");
+    }
+    if (requestedTabId && !BROWSER_RUNTIME.getTab(requestedTabId)) {
+      BROWSER_RUNTIME.createTab({
+        tabId: requestedTabId,
+        url: contents.getURL() || "about:blank",
+        title: contents.getTitle() || "新标签页",
+        page: electronBrowserPage(contents),
+      });
+      browserContentsTabs.set(contents.id, requestedTabId);
+      attachBrowserMetadata(contents, requestedTabId);
+    } else if (
+      requestedTabId &&
+      !BROWSER_RUNTIME.getTab(requestedTabId)?.attached
+    ) {
+      BROWSER_RUNTIME.attachPage(requestedTabId, electronBrowserPage(contents));
+      browserContentsTabs.set(contents.id, requestedTabId);
+      attachBrowserMetadata(contents, requestedTabId);
+    } else {
+      attachBrowserContents(contents);
+    }
+    return browserContentsTabs.get(contentsId) ?? null;
+  });
+  ipcMain.handle("browser:history:suggest", (_event, query: string) =>
+    BROWSER_RUNTIME.history.suggest(
+      query,
+      BROWSER_RUNTIME.listTabs().map(({ tabId, url, title, pinned, favicon }) => ({
+        tabId,
+        url,
+        title,
+        pinned,
+        favicon,
+      }))
+    )
+  );
+  ipcMain.handle("browser:history:record-search", (_event, query: string) =>
+    BROWSER_RUNTIME.history.recordSearch(query)
+  );
   ipcMain.handle("browser:session:flush", () => BROWSER_SESSION.flush());
   ipcMain.handle("browser:session:open-storage", () =>
     shell.openPath(BROWSER_SESSION.storageDirectory)
@@ -468,6 +608,17 @@ function registerIpc() {
   );
   ipcMain.handle("mailuo:memory-path", () => memoryPath());
   ipcMain.handle("mailuo:memory-append", (_e, note: string) => appendMemory(note));
+  ipcMain.handle("mailuo:memory-list", (_e, includeSuperseded = false) =>
+    listMemory(includeSuperseded)
+  );
+  ipcMain.handle("mailuo:memory-enabled", (_e, enabled: boolean) =>
+    setMemoryEnabled(enabled)
+  );
+  ipcMain.handle("mailuo:memory-update", (_e, id: string, patch: Record<string, unknown>) =>
+    updateMemory(id, patch)
+  );
+  ipcMain.handle("mailuo:memory-delete", (_e, id: string) => deleteMemory(id));
+  ipcMain.handle("mailuo:memory-rebuild", () => rebuildMemory());
   ipcMain.handle("mailuo:workspace-dir", (_e, projectId: string) =>
     workspaceDir(projectId)
   );
@@ -544,7 +695,29 @@ if (!app.requestSingleInstanceLock()) {
   void app.whenReady().then(async () => {
     registerIpc();
     BROWSER_SESSION.initialize(() => win);
+    BROWSER_SESSION.setManagedTabHandler((source, url, disposition, userGesture) => {
+      const sourceTabId = browserContentsTabs.get(source.id);
+      if (!sourceTabId) {
+        win?.webContents.send("browser:open-tab", url);
+        return;
+      }
+      const tab = BROWSER_RUNTIME.openPage({
+        sourceTabId,
+        url,
+        disposition,
+        userGesture,
+      });
+      win?.webContents.send("browser:open-tab", {
+        url,
+        tabId: tab.tabId,
+      });
+    });
+    await loadBrowserState();
+    BROWSER_RUNTIME.subscribe(() => publishBrowserTabs());
     createWindow();
+    setBrowserTabRequestHandler((tabId, url) =>
+      win?.webContents.send("browser:open-tab", { tabId, url })
+    );
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
@@ -561,7 +734,7 @@ if (!app.requestSingleInstanceLock()) {
     if (browserDataFlushed) return;
     event.preventDefault();
     browserDataFlushed = true;
-    void BROWSER_SESSION.flush()
+    void Promise.all([BROWSER_SESSION.flush(), saveBrowserState()])
       .catch(() => undefined)
       .finally(() => app.quit());
   });

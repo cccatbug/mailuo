@@ -85,6 +85,17 @@ export function isExternalBrowserProtocol(rawUrl: string): boolean {
   }
 }
 
+function isAuthenticationPopup(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    return /(?:^|[./_-])(oauth|authorize|auth|login|signin|sso|saml|payment|checkout)(?:[./?&=_-]|$)/i.test(
+      `${url.hostname}${url.pathname}`
+    );
+  } catch {
+    return false;
+  }
+}
+
 function installClientHintsOverride(browserSession: Session, userAgent: string) {
   const chrome = userAgent.match(/Chrome\/([\d.]+)/i);
   if (!chrome) return;
@@ -110,6 +121,27 @@ export class BrowserSessionManager {
   private browserSession: Session | null = null;
   private readonly configuredContents = new Set<number>();
   private getParentWindow: (() => BrowserWindow | null) | null = null;
+  private openManagedTab:
+    | ((
+        source: WebContents,
+        url: string,
+        disposition: string,
+        userGesture: boolean
+      ) => void)
+    | null = null;
+
+  setManagedTabHandler(
+    handler:
+      | ((
+          source: WebContents,
+          url: string,
+          disposition: string,
+          userGesture: boolean
+        ) => void)
+      | null
+  ) {
+    this.openManagedTab = handler;
+  }
 
   initialize(getParentWindow: () => BrowserWindow | null) {
     if (this.browserSession) return;
@@ -154,6 +186,10 @@ export class BrowserSessionManager {
   private get session(): Session {
     if (!this.browserSession) throw new Error("浏览器 Session 尚未初始化");
     return this.browserSession;
+  }
+
+  get electronSession(): Session {
+    return this.session;
   }
 
   private installPermissions(browserSession: Session) {
@@ -221,14 +257,30 @@ export class BrowserSessionManager {
     if (this.configuredContents.has(contents.id)) return;
     this.configuredContents.add(contents.id);
     contents.setBackgroundThrottling(false);
+    let lastUserGestureAt = 0;
+    contents.on("before-mouse-event", (_event, mouse) => {
+      if (mouse.type === "mouseDown") lastUserGestureAt = Date.now();
+    });
+    contents.on("before-input-event", (_event, input) => {
+      if (input.type === "keyDown") lastUserGestureAt = Date.now();
+    });
 
     const onCreatedWindow = (child: BrowserWindow) => {
       this.configureContents(child.webContents, true);
     };
     contents.on("did-create-window", onCreatedWindow);
-    contents.setWindowOpenHandler(({ url }) => {
+    contents.setWindowOpenHandler(({ url, disposition }) => {
       if (isExternalBrowserProtocol(url)) {
         void shell.openExternal(url);
+        return { action: "deny" };
+      }
+      if (this.openManagedTab && !isAuthenticationPopup(url)) {
+        this.openManagedTab(
+          contents,
+          url,
+          disposition,
+          Date.now() - lastUserGestureAt < 1_000
+        );
         return { action: "deny" };
       }
       return {

@@ -2,21 +2,16 @@ import { createElement, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
-  Bot,
   ExternalLink,
   Globe2,
   LoaderCircle,
   MoreVertical,
   RefreshCw,
   Search,
-  Sparkles,
-  X,
 } from "lucide-react";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { bridge } from "@/lib/bridge";
-import { useAppStore } from "@/store/useAppStore";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -40,7 +35,15 @@ interface MailuoWebview extends HTMLElement {
   openDevTools(): void;
   closeDevTools(): void;
   isDevToolsOpened(): boolean;
+  getWebContentsId(): number;
 }
+
+const SEARCH_TEMPLATES: Record<string, string> = {
+  google: "https://www.google.com/search?q=%s",
+  bing: "https://www.bing.com/search?q=%s",
+  baidu: "https://www.baidu.com/s?wd=%s",
+  duckduckgo: "https://duckduckgo.com/?q=%s",
+};
 
 function normalizeAddress(value: string): string {
   const input = value.trim();
@@ -49,21 +52,35 @@ function normalizeAddress(value: string): string {
   if (/^(localhost|[\w-]+(?:\.[\w-]+)+)(:\d+)?(?:\/|$)/i.test(input)) {
     return `https://${input}`;
   }
-  return `https://www.google.com/search?q=${encodeURIComponent(input)}`;
+  const provider = localStorage.getItem("mailuo-browser-search-provider") ?? "google";
+  const template =
+    provider === "custom"
+      ? localStorage.getItem("mailuo-browser-search-template")
+      : SEARCH_TEMPLATES[provider];
+  const safeTemplate =
+    template?.startsWith("https://") && template.includes("%s")
+      ? template
+      : SEARCH_TEMPLATES.google;
+  return safeTemplate.replace("%s", encodeURIComponent(input));
 }
 
-const EXTRACT_SCRIPT = `(() => {
-  const root = document.querySelector('article, main, [role="main"]') || document.body;
-  const clone = root.cloneNode(true);
-  clone.querySelectorAll('script,style,noscript,nav,footer,header,svg').forEach((node) => node.remove());
-  return {
-    title: document.title,
-    url: location.href,
-    text: (clone.innerText || clone.textContent || '').replace(/\\n{3,}/g, '\\n\\n').trim().slice(0, 30000)
-  };
-})()`;
+interface AddressSuggestion {
+  kind: "tab" | "history" | "search";
+  tabId?: string;
+  url?: string;
+  title?: string;
+  query?: string;
+}
 
-export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
+export function BrowserPanel({
+  initialUrl,
+  tabId,
+  onTitleChange,
+}: {
+  initialUrl?: string;
+  tabId?: string;
+  onTitleChange?: (title: string) => void;
+}) {
   const webviewRef = useRef<MailuoWebview | null>(null);
   // webview 的 src 只能用于首次导航。把网页自身导航写回 src 会触发重载，
   // 从而打断 CAS/OAuth 的 302、POST 和 window.opener 回跳链。
@@ -74,14 +91,30 @@ export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
   const [loading, setLoading] = useState(true);
   const [canBack, setCanBack] = useState(false);
   const [canForward, setCanForward] = useState(false);
-  const [assistantOpen, setAssistantOpen] = useState(false);
-  const [asking, setAsking] = useState(false);
-  const [question, setQuestion] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<AddressSuggestion[]>([]);
+  const [addressFocused, setAddressFocused] = useState(false);
+
+  useEffect(() => {
+    const browserBridge = bridge;
+    if (!addressFocused || !browserBridge) return;
+    const timer = window.setTimeout(() => {
+      void browserBridge
+        .suggestBrowserAddress(address)
+        .then((items) => setSuggestions(items as AddressSuggestion[]))
+        .catch(() => setSuggestions([]));
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [address, addressFocused]);
 
   useEffect(() => {
     const view = webviewRef.current;
     if (!view) return;
+    const register = () => {
+      const id = view.getWebContentsId?.();
+      if (id) void bridge?.browserTabForContents(id, tabId);
+    };
     const sync = (event?: Event) => {
       const navigationEvent = event as Event & {
         url?: string;
@@ -119,24 +152,34 @@ export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
       setLoading(false);
       setLoadError(failure.errorDescription || "页面加载失败");
     };
+    const titleChanged = (event: Event) => {
+      const titleEvent = event as Event & { title?: string };
+      const title = titleEvent.title || view.getTitle?.();
+      if (title) onTitleChange?.(title);
+    };
     view.addEventListener("did-start-loading", start);
+    view.addEventListener("dom-ready", register);
     view.addEventListener("did-stop-loading", stop);
     view.addEventListener("did-navigate", sync);
     view.addEventListener("did-navigate-in-page", sync);
     view.addEventListener("did-redirect-navigation", sync);
     view.addEventListener("did-fail-load", failed);
+    view.addEventListener("page-title-updated", titleChanged);
     return () => {
       view.removeEventListener("did-start-loading", start);
+      view.removeEventListener("dom-ready", register);
       view.removeEventListener("did-stop-loading", stop);
       view.removeEventListener("did-navigate", sync);
       view.removeEventListener("did-navigate-in-page", sync);
       view.removeEventListener("did-redirect-navigation", sync);
       view.removeEventListener("did-fail-load", failed);
+      view.removeEventListener("page-title-updated", titleChanged);
     };
-  }, []);
+  }, [onTitleChange, tabId]);
 
-  const navigate = () => {
-    const next = normalizeAddress(address);
+  const navigateTo = (value: string) => {
+    const raw = value.trim();
+    const next = normalizeAddress(value);
     const view = webviewRef.current;
     const live = view?.getURL?.() || currentUrlRef.current || null;
     const declared = view?.getAttribute?.("src") ?? null;
@@ -144,47 +187,27 @@ export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
     currentUrlRef.current = next;
     setCurrentUrl(next);
     setAddress(next);
+    if (
+      raw &&
+      !/^[a-z][a-z\d+.-]*:/i.test(raw) &&
+      !/^(localhost|[\w-]+(?:\.[\w-]+)+)(:\d+)?(?:\/|$)/i.test(raw)
+    ) {
+      void bridge?.recordBrowserSearch(raw);
+    }
     void view?.loadURL(next);
   };
+  const navigate = () => navigateTo(address);
 
-  const askShu = async (preset?: string) => {
-    const view = webviewRef.current;
-    if (!view || asking) return;
-    setAsking(true);
-    try {
-      if (!useAppStore.getState().selectedProjectId) {
-        throw new Error("请先选择一个项目，再把网页交给小枢");
-      }
-      const page = await view.executeJavaScript<{
-        title: string;
-        url: string;
-        text: string;
-      }>(EXTRACT_SCRIPT);
-      if (!page.text) throw new Error("当前页面没有可提取的正文");
-      const request =
-        preset ||
-        question.trim() ||
-        "请提炼这篇网页最重要的信息，并列出关键事实和可执行结论。";
-      useAppStore.getState().setAssistantOpen(true);
-      (window as Window & { __mailuoPendingBrowserAsk?: unknown }).__mailuoPendingBrowserAsk = {
-        prompt: request,
-        page,
-      };
-      window.dispatchEvent(
-        new CustomEvent("mailuo:browser-ask-shu", {
-          detail: { prompt: request, page },
-        })
-      );
-      setQuestion("");
-      setAssistantOpen(false);
-      toast.success("已交给当前项目的小枢", {
-        description: "网页内容、项目上下文、资产和记忆会在同一会话中使用。",
-      });
-    } catch (error) {
-      toast.error("小枢读取网页失败", { description: String(error) });
-    } finally {
-      setAsking(false);
+  const selectSuggestion = (suggestion: AddressSuggestion) => {
+    setAddressFocused(false);
+    if (suggestion.kind === "tab" && suggestion.tabId) {
+      void bridge?.activateBrowserTab(suggestion.tabId);
+      return;
     }
+    const value = suggestion.kind === "search" ? suggestion.query : suggestion.url;
+    if (!value) return;
+    setAddress(value);
+    navigateTo(value);
   };
 
   return (
@@ -212,8 +235,30 @@ export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
             className="h-7 rounded-full bg-muted/50 pr-8 pl-8 text-xs"
             aria-label="网址或搜索"
             onChange={(event) => setAddress(event.target.value)}
+            onFocus={() => setAddressFocused(true)}
+            onBlur={() => window.setTimeout(() => setAddressFocused(false), 100)}
           />
           <Search className="pointer-events-none absolute top-1/2 right-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          {addressFocused && suggestions.length > 0 && (
+            <div className="absolute top-8 inset-x-0 z-30 overflow-hidden rounded-lg border bg-popover p-1 shadow-lg">
+              {suggestions.map((suggestion, index) => (
+                <button
+                  type="button"
+                  key={`${suggestion.kind}:${suggestion.tabId ?? suggestion.url ?? suggestion.query}:${index}`}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => selectSuggestion(suggestion)}
+                >
+                  <span className="w-12 shrink-0 text-[10px] text-muted-foreground">
+                    {suggestion.kind === "tab" ? "已打开" : suggestion.kind === "search" ? "搜索" : "历史"}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">
+                    {suggestion.title ?? suggestion.query ?? suggestion.url}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </form>
         <Button variant="ghost" size="icon-sm" title="在系统浏览器打开" onClick={() => bridge?.openExternal(currentUrl)}>
           <ExternalLink />
@@ -239,25 +284,16 @@ export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
               variant="destructive"
               onClick={() => {
                 if (!window.confirm("清除内置浏览器的 Cookie、缓存、登录态和认证信息？")) return;
-                void bridge?.clearBrowserData().then(() => {
-                  toast.success("浏览器会话数据已清除");
-                  webviewRef.current?.reload();
-                });
+                setActionError(null);
+                void bridge?.clearBrowserData()
+                  .then(() => webviewRef.current?.reload())
+                  .catch((error) => setActionError(String(error)));
               }}
             >
               清除 Cookie 与缓存…
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        <Button
-          variant={assistantOpen ? "secondary" : "ghost"}
-          size="sm"
-          className="h-7"
-          onClick={() => setAssistantOpen((open) => !open)}
-        >
-          <Sparkles className="text-primary" />
-          小枢
-        </Button>
       </div>
       {createElement("webview", {
         ref: (node: MailuoWebview | null) => {
@@ -274,45 +310,10 @@ export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
           {loadError}。如果这是扫码登录回跳，请确认对应客户端已安装；HTTP(S) 登录弹窗会保留在脉络浏览会话中。
         </div>
       )}
-      {assistantOpen && (
-        <aside className="absolute top-11 right-2 bottom-2 z-20 flex w-[min(380px,calc(100%-16px))] flex-col overflow-hidden rounded-xl border bg-background/96 shadow-2xl backdrop-blur">
-          <div className="flex h-10 shrink-0 items-center gap-2 border-b px-3">
-            <Bot className="size-4 text-primary" />
-            <span className="text-sm font-medium">小枢 · 网页助手</span>
-            <Button variant="ghost" size="icon-sm" className="ml-auto" onClick={() => setAssistantOpen(false)}>
-              <X />
-            </Button>
-          </div>
-          <div className="flex gap-1 border-b p-2">
-            {[
-              ["总结", "用 5 个要点总结当前网页，并给出一句话结论。"],
-              ["提取", "提取人物、组织、日期、数字、链接及关键事实，分类列出。"],
-              ["行动项", "从网页中提取可执行行动项，按优先级排列。"],
-            ].map(([label, prompt]) => (
-              <Button key={label} variant="outline" size="sm" disabled={asking} onClick={() => void askShu(prompt)}>
-                {label}
-              </Button>
-            ))}
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto p-3 text-sm">
-            <div className="flex h-full items-center justify-center text-center text-xs leading-relaxed text-muted-foreground">
-              当前网页会作为上下文发送给应用外围的小枢。<br />
-              小枢仍可使用当前项目任务、资产、记忆、模型和 Agent 工具。
-            </div>
-          </div>
-          <form
-            className="flex gap-2 border-t p-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void askShu();
-            }}
-          >
-            <Input value={question} placeholder="问问当前网页…" disabled={asking} onChange={(event) => setQuestion(event.target.value)} />
-            <Button type="submit" size="sm" disabled={asking || !question.trim()}>
-              {asking ? <LoaderCircle className="animate-spin" /> : "发送"}
-            </Button>
-          </form>
-        </aside>
+      {actionError && (
+        <div className="absolute inset-x-3 top-13 z-10 rounded-lg border border-destructive/30 bg-background/95 px-3 py-2 text-xs text-destructive shadow-sm">
+          {actionError}
+        </div>
       )}
     </div>
   );

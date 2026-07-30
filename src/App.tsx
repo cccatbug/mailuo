@@ -1,6 +1,5 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Minus, Square, X } from "lucide-react";
-import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAppStore } from "@/store/useAppStore";
 import { Ribbon } from "@/components/Ribbon";
@@ -16,7 +15,6 @@ import { CommandPalette } from "@/features/command/CommandPalette";
 import { SettingsDialog } from "@/features/settings/SettingsDialog";
 import { AiDialogs } from "@/features/ai/AiDialogs";
 import { bridge } from "@/lib/bridge";
-import { toast } from "sonner";
 import { isMac } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 
@@ -93,6 +91,11 @@ export default function App() {
   const togglePanel = useAppStore((s) => s.togglePanel);
   const assistantMode = useAppStore((s) => s.assistantMode);
   const panelLeft = useAppStore((s) => s.panelLeft);
+  const [download, setDownload] = useState<{
+    state: string;
+    filename: string;
+    path: string;
+  } | null>(null);
 
   useEffect(() => {
     void init();
@@ -100,22 +103,19 @@ export default function App() {
 
   useEffect(() => {
     return bridge?.onBrowserDownload((event) => {
-      if (event.state === "started") {
-        toast.info(`开始下载 ${event.filename}`);
-      } else if (event.state === "completed") {
-        toast.success(`已下载 ${event.filename}`, {
-          action: {
-            label: "打开",
-            onClick: () => void bridge?.openBrowserDownload(event.path),
-          },
-        });
-      } else {
-        toast.error(`下载未完成：${event.filename}`);
-      }
+      setDownload(event);
     });
   }, []);
 
-  useEffect(() => bridge?.onBrowserOpenTab((url) => openBrowserPanel(url)), []);
+  useEffect(
+    () =>
+      bridge?.onBrowserOpenTab((request) =>
+        typeof request === "string"
+          ? openBrowserPanel(request)
+          : openBrowserPanel(request.url, request.tabId)
+      ),
+    []
+  );
 
   // 原生窗口标题跟随当前项目与视图
   const projects = useAppStore((s) => s.projects);
@@ -207,11 +207,36 @@ export default function App() {
             <DockLayout />
           </div>
         </div>
+        {download && (
+          <div className="flex h-8 shrink-0 items-center gap-2 border-t bg-background px-3 text-xs">
+            <span className="truncate">
+              {download.state === "started"
+                ? `正在下载 ${download.filename}`
+                : download.state === "completed"
+                  ? `已下载 ${download.filename}`
+                  : `下载未完成：${download.filename}`}
+            </span>
+            {download.state === "completed" && (
+              <button
+                className="ml-auto text-primary hover:underline"
+                onClick={() => void bridge?.openBrowserDownload(download.path)}
+              >
+                打开
+              </button>
+            )}
+            <button
+              aria-label="关闭下载状态"
+              className="ml-1 text-muted-foreground hover:text-foreground"
+              onClick={() => setDownload(null)}
+            >
+              <X className="size-3.5" />
+            </button>
+          </div>
+        )}
       </div>
       <CommandPalette />
       <SettingsDialog />
       <AiDialogs />
-      <Toaster position="bottom-right" richColors />
     </TooltipProvider>
   );
 }

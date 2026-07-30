@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   Bot,
+  Brain,
   Copy,
   Database,
   FolderOpen,
@@ -10,6 +11,7 @@ import {
   Palette,
   RotateCcw,
   SunMedium,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -48,6 +50,7 @@ import { seedData } from "@/store/seed";
 import { AiSettingsPane } from "./AiSettingsPane";
 import { BrowserSettingsPane } from "./BrowserSettingsPane";
 import packageInfo from "../../../package.json";
+import type { MemoryEntry } from "../../../electron/memory-store";
 
 /* ---------- Obsidian 式设置行：左侧名称+描述，右侧控件 ---------- */
 
@@ -324,12 +327,108 @@ function AboutPane() {
   );
 }
 
+function MemoryPane() {
+  const [enabled, setEnabled] = useState(true);
+  const [entries, setEntries] = useState<MemoryEntry[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = () => {
+    void bridge
+      ?.listMemory()
+      .then((snapshot) => {
+        setEnabled(snapshot.enabled);
+        setEntries(snapshot.entries);
+        setError(null);
+      })
+      .catch((cause) => setError(String(cause)));
+  };
+
+  useEffect(refresh, []);
+
+  return (
+    <div>
+      <h2 className="font-heading text-xl font-bold">长期记忆</h2>
+      <p className="mt-1 text-sm text-muted-foreground">
+        事实、偏好、项目记忆和推断画像分层保存；推断不会当作用户事实。
+      </p>
+      <SettingRow title="自动记忆" description="关闭后停止提取，也不会把已有记忆加入上下文。">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(event) => {
+            const value = event.target.checked;
+            setEnabled(value);
+            void bridge?.setMemoryEnabled(value).catch((cause) => setError(String(cause)));
+          }}
+        />
+      </SettingRow>
+      {error && <p className="my-3 text-xs text-destructive">{error}</p>}
+      <div className="mt-4 space-y-2">
+        {entries.map((entry) => (
+          <div key={entry.id} className="rounded-lg border bg-card p-3">
+            <div className="flex items-center gap-2">
+              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                {entry.kind === "fact"
+                  ? "事实"
+                  : entry.kind === "preference"
+                    ? "偏好"
+                    : entry.kind === "project"
+                      ? "项目"
+                      : "推断"}
+              </span>
+              <input
+                className="min-w-0 flex-1 bg-transparent text-sm font-medium outline-none"
+                defaultValue={entry.key}
+                onBlur={(event) =>
+                  void bridge?.updateMemory(entry.id, { key: event.target.value })
+                }
+              />
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="删除记忆"
+                onClick={() =>
+                  void bridge?.deleteMemory(entry.id).then(refresh).catch((cause) => setError(String(cause)))
+                }
+              >
+                <Trash2 />
+              </Button>
+            </div>
+            <textarea
+              className="mt-2 min-h-16 w-full resize-y rounded-md border bg-background p-2 text-xs"
+              defaultValue={entry.value}
+              onBlur={(event) =>
+                void bridge?.updateMemory(entry.id, { value: event.target.value })
+              }
+            />
+            <p className="mt-1 text-[10px] text-muted-foreground">
+              依据：{entry.evidence} · 置信度 {Math.round(entry.confidence * 100)}%
+            </p>
+          </div>
+        ))}
+        {entries.length === 0 && (
+          <p className="py-8 text-center text-sm text-muted-foreground">还没有长期记忆</p>
+        )}
+      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        className="mt-3"
+        onClick={() => void bridge?.rebuildMemory().then(refresh).catch((cause) => setError(String(cause)))}
+      >
+        <RotateCcw />归并并重建
+      </Button>
+    </div>
+  );
+}
+
 /* ---------- 主对话框：左导航 + 右内容（Obsidian 式浮空模态框） ---------- */
 
 const PANES = [
   { key: "appearance", label: "外观", icon: Palette, pane: AppearancePane },
   { key: "ai", label: "AI", icon: Bot, pane: AiSettingsPane },
   { key: "browser", label: "浏览器", icon: Globe2, pane: BrowserSettingsPane },
+  { key: "memory", label: "长期记忆", icon: Brain, pane: MemoryPane },
   { key: "data", label: "数据", icon: Database, pane: DataPane },
   { key: "about", label: "关于", icon: Info, pane: AboutPane },
 ] as const;

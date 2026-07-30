@@ -25,6 +25,13 @@ function formatBytes(value: number): string {
 export function BrowserSettingsPane() {
   const [snapshot, setSnapshot] = useState<BrowserSessionSnapshot | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [searchProvider, setSearchProvider] = useState(
+    () => localStorage.getItem("mailuo-browser-search-provider") ?? "google"
+  );
+  const [searchTemplate, setSearchTemplate] = useState(
+    () => localStorage.getItem("mailuo-browser-search-template") ?? ""
+  );
+  const [inlineError, setInlineError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!bridge) return;
@@ -133,6 +140,48 @@ export function BrowserSettingsPane() {
           <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => void importCookies()}>
             <Import />从 Cookie JSON 导入
           </Button>
+        </div>
+      </section>
+
+      <section className="rounded-xl border bg-card p-4">
+        <h3 className="text-sm font-medium">地址栏搜索</h3>
+        <p className="mt-1 text-xs text-muted-foreground">
+          历史与建议只在本机计算，不会发送给模型或远程联想服务。
+        </p>
+        <div className="mt-3 grid gap-3">
+          <select
+            className="h-9 rounded-md border bg-background px-3 text-sm"
+            value={searchProvider}
+            onChange={(event) => {
+              const value = event.target.value;
+              setSearchProvider(value);
+              localStorage.setItem("mailuo-browser-search-provider", value);
+            }}
+          >
+            <option value="google">Google</option>
+            <option value="bing">Bing</option>
+            <option value="baidu">Baidu</option>
+            <option value="duckduckgo">DuckDuckGo</option>
+            <option value="custom">自定义</option>
+          </select>
+          {searchProvider === "custom" && (
+            <input
+              className="h-9 rounded-md border bg-background px-3 font-mono text-sm"
+              value={searchTemplate}
+              placeholder="https://search.example/?q=%s"
+              onChange={(event) => {
+                const value = event.target.value;
+                setSearchTemplate(value);
+                if (!value.startsWith("https://") || !value.includes("%s")) {
+                  setInlineError("自定义模板必须使用 HTTPS 且包含 %s");
+                  return;
+                }
+                setInlineError(null);
+                localStorage.setItem("mailuo-browser-search-template", value);
+              }}
+            />
+          )}
+          {inlineError && <p className="text-xs text-destructive">{inlineError}</p>}
         </div>
       </section>
 

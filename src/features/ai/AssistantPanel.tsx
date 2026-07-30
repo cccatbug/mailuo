@@ -962,8 +962,22 @@ export function AssistantPanel() {
           persistChats();
           void assistantReset();
         }}
-        onSend={(text, ids, skills, attachments, assetRefs) =>
-          sendMessage(text, ids, skills, attachments, assetRefs)
+        onSend={(text, ids, skills, attachments, assetRefs, browserTabs) =>
+          sendMessage(
+            text,
+            ids,
+            skills,
+            attachments,
+            assetRefs,
+            browserTabs.length
+              ? `\n\n【用户 @ 引用的浏览器标签页】\n${browserTabs
+                  .map(
+                    (tab) =>
+                      `- tabId: ${tab.tabId}\n  标题: ${tab.title}\n  URL: ${tab.url}`
+                  )
+                  .join("\n")}\n标签页身份以 tabId 为准；需要实时内容时使用原生 browser_* 工具。`
+              : ""
+          )
         }
       />
     </div>

@@ -49,6 +49,7 @@ import {
 } from "./attachments";
 import { getSkills, type SkillInfo } from "./skills";
 import type { AssetRecord } from "@/shared/assets";
+import type { BrowserTab } from "../../../electron/browser-runtime";
 
 /* ---------- 内置快捷指令（/） ---------- */
 
@@ -150,13 +151,16 @@ export function Composer({
     mentionedIds: string[],
     skillNames: string[],
     attachments: ComposerAttachment[],
-    assetRefs: AssetRecord[]
+    assetRefs: AssetRecord[],
+    browserTabs: BrowserTab[]
   ) => Promise<boolean>;
 }) {
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
 
   const [input, setInput] = useState("");
   const [mentions, setMentions] = useState<Task[]>([]);
+  const [browserTabs, setBrowserTabs] = useState<BrowserTab[]>([]);
+  const [mentionedTabs, setMentionedTabs] = useState<BrowserTab[]>([]);
   const [menu, setMenu] = useState<"none" | "mention" | "slash" | "skill" | "asset">("none");
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [usedSkills, setUsedSkills] = useState<string[]>([]);
@@ -170,6 +174,7 @@ export function Composer({
   const [preparingAttachments, setPreparingAttachments] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [dragActive, setDragActive] = useState(false);
+  const [inlineError, setInlineError] = useState<string | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const dragDepthRef = useRef(0);
@@ -181,6 +186,12 @@ export function Composer({
   useEffect(() => {
     attachmentsRef.current = attachments;
   }, [attachments]);
+
+  useEffect(() => {
+    if (!bridge) return;
+    void bridge.listBrowserTabs().then(setBrowserTabs);
+    return bridge.onBrowserTabs(setBrowserTabs);
+  }, []);
 
   useEffect(
     () => () => attachmentsRef.current.forEach(releaseAttachment),
@@ -231,10 +242,20 @@ export function Composer({
     setMenu("none");
   };
 
-  const mentionCandidates = tasks
+  const taskMentionCandidates = tasks
     .filter((t) => !mentions.some((m) => m.id === t.id))
     .filter((t) => t.title.toLowerCase().includes(query.toLowerCase()))
     .slice(0, 8);
+  const tabMentionCandidates = browserTabs
+    .filter((tab) => !mentionedTabs.some((entry) => entry.tabId === tab.tabId))
+    .filter((tab) =>
+      `${tab.title} ${tab.url}`.toLowerCase().includes(query.toLowerCase())
+    )
+    .slice(0, 8);
+  const mentionCandidates = [
+    ...tabMentionCandidates.map((tab) => ({ kind: "tab" as const, tab })),
+    ...taskMentionCandidates.map((task) => ({ kind: "task" as const, task })),
+  ].slice(0, 8);
   const slashCandidates = SLASH_SKILLS.filter((s) =>
     s.name.includes(query)
   );
@@ -254,6 +275,21 @@ export function Composer({
     setMentions((prev) => [...prev, task]);
     setMenu("none");
     ta?.focus();
+  };
+
+  const applyTabMention = (tab: BrowserTab) => {
+    const ta = taRef.current;
+    const caret = ta?.selectionStart ?? input.length;
+    const before = input.slice(0, caret).replace(/@([^\s@]*)$/, "");
+    setInput(`${before}@${tab.title} ${input.slice(caret)}`);
+    setMentionedTabs((previous) => [...previous, tab]);
+    setMenu("none");
+    ta?.focus();
+  };
+
+  const applyMentionCandidate = (candidate: (typeof mentionCandidates)[number]) => {
+    if (candidate.kind === "tab") applyTabMention(candidate.tab);
+    else applyMention(candidate.task);
   };
 
   const applySlash = (skill: SlashSkill) => {
@@ -375,12 +411,25 @@ export function Composer({
       const text = input.trim();
       const sendingAttachments = [...attachmentsRef.current];
       if (!text && sendingAttachments.length === 0) return;
+      const selectedTabs = mentionedTabs.filter((tab) =>
+        input.includes(`@${tab.title}`)
+      );
+      if (selectedTabs.length && bridge) {
+        const openIds = new Set((await bridge.listBrowserTabs()).map((tab) => tab.tabId));
+        const closed = selectedTabs.find((tab) => !openIds.has(tab.tabId));
+        if (closed) {
+          setInlineError(`浏览器标签页「${closed.title}」已关闭，请移除引用后重试。`);
+          return;
+        }
+      }
+      setInlineError(null);
       const sent = await onSend(
         text,
         mentions.filter((m) => input.includes(`@${m.title}`)).map((m) => m.id),
         usedSkills.filter((n) => input.includes(`$${n}`)),
         sendingAttachments,
-        referencedAssets.filter((asset) => input.includes(`#${asset.name}`))
+        referencedAssets.filter((asset) => input.includes(`#${asset.name}`)),
+        selectedTabs
       );
       if (!sent) return;
       const sentIds = new Set(sendingAttachments.map((item) => item.id));
@@ -391,6 +440,7 @@ export function Composer({
       attachmentsRef.current = remaining;
       setInput("");
       setMentions([]);
+      setMentionedTabs([]);
       setUsedSkills([]);
       setAttachments(remaining);
       setReferencedAssets([]);
@@ -547,13 +597,18 @@ export function Composer({
           ))}
         </div>
       )}
+      {inlineError && (
+        <p className="mb-1 rounded-md border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-xs text-destructive">
+          {inlineError}
+        </p>
+      )}
 
       <div className="relative rounded-xl border bg-card focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-ring/40">
         {menu !== "none" && menuItems.length > 0 && (
           <div className="absolute bottom-full left-0 z-20 mb-1.5 w-72 overflow-hidden rounded-lg border bg-popover p-1 shadow-md">
             <p className="px-2 py-1 text-[10px] tracking-wider text-muted-foreground">
               {menu === "mention"
-                ? "引用任务（↑↓ 选择，⏎ 确认）"
+                ? "引用任务或浏览器标签页（↑↓ 选择，⏎ 确认）"
                 : menu === "skill"
                   ? "引用 skill（~/.mailuo/ai/skills）"
                   : menu === "asset"
@@ -561,27 +616,42 @@ export function Composer({
                   : "快捷指令"}
             </p>
             {menu === "mention"
-              ? mentionCandidates.map((t, i) => (
+              ? mentionCandidates.map((candidate, i) => {
+                  const isTab = candidate.kind === "tab";
+                  const id = isTab ? candidate.tab.tabId : candidate.task.id;
+                  const title = isTab ? candidate.tab.title : candidate.task.title;
+                  return (
                   <button
-                    key={t.id}
+                    key={id}
                     className={cn(
                       "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm",
                       i === highlight ? "bg-accent" : "hover:bg-accent/60"
                     )}
                     onMouseEnter={() => setHighlight(i)}
-                    onClick={() => applyMention(t)}
+                    onClick={() => applyMentionCandidate(candidate)}
                   >
-                    <span
-                      className={cn(
-                        "size-2 shrink-0 rounded-full",
-                        t.status === "done" && "bg-status-done",
-                        t.status === "doing" && "bg-status-doing",
-                        t.status === "todo" && "bg-status-todo"
+                    {isTab && candidate.tab.favicon ? (
+                      <img src={candidate.tab.favicon} className="size-4 rounded-sm" alt="" />
+                    ) : (
+                      <span className="size-2 shrink-0 rounded-full bg-muted-foreground" />
+                    )}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate">{title}</span>
+                      {isTab && (
+                        <span className="block truncate text-[10px] text-muted-foreground">
+                          {(() => {
+                            try {
+                              return new URL(candidate.tab.url).hostname || candidate.tab.url;
+                            } catch {
+                              return candidate.tab.url;
+                            }
+                          })()}
+                        </span>
                       )}
-                    />
-                    <span className="truncate">{t.title}</span>
+                    </span>
                   </button>
-                ))
+                  );
+                })
               : menu === "skill"
                 ? skillCandidates.map((s, i) => (
                     <button
@@ -661,7 +731,7 @@ export function Composer({
               }
               if (e.key === "Enter" || e.key === "Tab") {
                 e.preventDefault();
-                if (menu === "mention") applyMention(mentionCandidates[highlight]);
+                if (menu === "mention") applyMentionCandidate(mentionCandidates[highlight]);
                 else if (menu === "skill") applySkill(skillCandidates[highlight]);
                 else if (menu === "asset") applyAsset(assetCandidates[highlight]);
                 else applySlash(slashCandidates[highlight]);
