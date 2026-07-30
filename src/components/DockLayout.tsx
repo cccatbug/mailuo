@@ -54,6 +54,7 @@ import { AssetPanel } from "@/features/files/AssetPanel";
 import { useAppStore, type ViewMode } from "@/store/useAppStore";
 import { bridge } from "@/lib/bridge";
 import type { BrowserTab } from "../../electron/browser-runtime";
+import { findBrowserPanelsToClose } from "@/features/files/browser-panel-sync";
 
 const LAYOUT_KEY = "mailuo-dock-v1";
 
@@ -459,6 +460,7 @@ const g = globalThis as unknown as {
 g.__mailuoDock ??= { api: null };
 const dockRef = g.__mailuoDock;
 let activeRuntimeTabId: string | null = null;
+let registeredRuntimeTabIds = new Set<string>();
 
 // 每次模块求值（含 HMR）都刷新处理器，事件订阅只调用指针，避免旧闭包复活
 dockRef.handleRemove = (panelId: string) => {
@@ -490,7 +492,6 @@ function buildDefaultLayout(api: DockviewApi) {
 function syncBrowserPanels(tabs: BrowserTab[]) {
   const api = dockRef.api;
   if (!api) return;
-  const ids = new Set(tabs.map((tab) => `browser:${tab.tabId}`));
   activeRuntimeTabId = tabs.find((tab) => tab.active)?.tabId ?? null;
   internalOp = true;
   try {
@@ -504,14 +505,22 @@ function syncBrowserPanels(tabs: BrowserTab[]) {
       panel?.api.setTitle(tab.title || tab.url);
       if (tab.active) panel?.api.setActive();
     }
+    const panelsToClose = new Set(
+      findBrowserPanelsToClose(
+        new Set(tabs.map((tab) => tab.tabId)),
+        registeredRuntimeTabIds,
+        api.panels.map((panel) => ({
+          id: panel.id,
+          tabId:
+            typeof panel.params?.tabId === "string"
+              ? panel.params.tabId
+              : undefined,
+        }))
+      )
+    );
+    registeredRuntimeTabIds = new Set(tabs.map((tab) => tab.tabId));
     for (const panel of api.panels) {
-      if (
-        panel.id.startsWith("browser:") &&
-        !ids.has(panel.id) &&
-        typeof panel.params?.tabId === "string"
-      ) {
-        panel.api.close();
-      }
+      if (panelsToClose.has(panel.id)) panel.api.close();
     }
   } finally {
     internalOp = false;
