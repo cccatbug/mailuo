@@ -11,6 +11,13 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { bridge } from "@/lib/bridge";
 import {
   DropdownMenu,
@@ -240,24 +247,35 @@ export function BrowserPanel({
           />
           <Search className="pointer-events-none absolute top-1/2 right-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
           {addressFocused && suggestions.length > 0 && (
-            <div className="absolute top-8 inset-x-0 z-30 overflow-hidden rounded-lg border bg-popover p-1 shadow-lg">
-              {suggestions.map((suggestion, index) => (
-                <button
-                  type="button"
-                  key={`${suggestion.kind}:${suggestion.tabId ?? suggestion.url ?? suggestion.query}:${index}`}
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent"
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => selectSuggestion(suggestion)}
-                >
-                  <span className="w-12 shrink-0 text-[10px] text-muted-foreground">
-                    {suggestion.kind === "tab" ? "已打开" : suggestion.kind === "search" ? "搜索" : "历史"}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">
-                    {suggestion.title ?? suggestion.query ?? suggestion.url}
-                  </span>
-                </button>
-              ))}
-            </div>
+            <Command
+              className="absolute top-8 inset-x-0 z-30 h-auto rounded-lg! border shadow-lg"
+              shouldFilter={false}
+            >
+              <CommandList>
+                <CommandEmpty>没有匹配的标签页或历史记录</CommandEmpty>
+                <CommandGroup heading="建议">
+                  {suggestions.map((suggestion, index) => (
+                    <CommandItem
+                      key={`${suggestion.kind}:${suggestion.tabId ?? suggestion.url ?? suggestion.query}:${index}`}
+                      value={`${suggestion.kind}:${suggestion.tabId ?? suggestion.url ?? suggestion.query}`}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onSelect={() => selectSuggestion(suggestion)}
+                    >
+                      <span className="w-12 shrink-0 text-[10px] text-muted-foreground">
+                        {suggestion.kind === "tab"
+                          ? "已打开"
+                          : suggestion.kind === "search"
+                            ? "搜索"
+                            : "历史"}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-xs">
+                        {suggestion.title ?? suggestion.query ?? suggestion.url}
+                      </span>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </CommandList>
+            </Command>
           )}
         </form>
         <Button variant="ghost" size="icon-sm" title="在系统浏览器打开" onClick={() => bridge?.openExternal(currentUrl)}>

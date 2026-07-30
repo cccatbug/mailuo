@@ -11,6 +11,15 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   bridge,
   type BrowserSessionSnapshot,
@@ -149,24 +158,29 @@ export function BrowserSettingsPane() {
           历史与建议只在本机计算，不会发送给模型或远程联想服务。
         </p>
         <div className="mt-3 grid gap-3">
-          <select
-            className="h-9 rounded-md border bg-background px-3 text-sm"
+          <Select
             value={searchProvider}
-            onChange={(event) => {
-              const value = event.target.value;
+            onValueChange={(value) => {
               setSearchProvider(value);
               localStorage.setItem("mailuo-browser-search-provider", value);
             }}
           >
-            <option value="google">Google</option>
-            <option value="bing">Bing</option>
-            <option value="baidu">Baidu</option>
-            <option value="duckduckgo">DuckDuckGo</option>
-            <option value="custom">自定义</option>
-          </select>
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="选择默认搜索引擎" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value="google">Google</SelectItem>
+                <SelectItem value="bing">Bing</SelectItem>
+                <SelectItem value="baidu">Baidu</SelectItem>
+                <SelectItem value="duckduckgo">DuckDuckGo</SelectItem>
+                <SelectItem value="custom">自定义</SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
           {searchProvider === "custom" && (
-            <input
-              className="h-9 rounded-md border bg-background px-3 font-mono text-sm"
+            <Input
+              className="font-mono"
               value={searchTemplate}
               placeholder="https://search.example/?q=%s"
               onChange={(event) => {

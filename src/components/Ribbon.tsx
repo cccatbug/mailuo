@@ -1,7 +1,6 @@
-import { FolderKanban, FolderOpen, Globe2, MoonStar, Search, Settings, SunMedium } from "lucide-react";
+import { Bot, FolderKanban, FolderOpen, Globe2, MoonStar, Search, Settings, SunMedium } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { ShuLogo } from "@/components/ShuLogo";
 import { useAppStore } from "@/store/useAppStore";
 import { MOD_KEY, modLabel } from "@/lib/platform";
 import { openAssetPanel, openBrowserPanel } from "@/components/DockLayout";
@@ -68,7 +67,7 @@ export function Ribbon() {
         label={`小枢 · AI 助手（${modLabel("J")}）`}
         onClick={() => setAssistantOpen(true)}
       >
-        <ShuLogo className="text-primary" />
+        <Bot />
       </RibbonButton>
       <RibbonButton label="浏览器 · 小枢网页助手" onClick={() => openBrowserPanel()}>
         <Globe2 />

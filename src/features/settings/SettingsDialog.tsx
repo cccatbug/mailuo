@@ -16,6 +16,10 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -352,11 +356,10 @@ function MemoryPane() {
         事实、偏好、项目记忆和推断画像分层保存；推断不会当作用户事实。
       </p>
       <SettingRow title="自动记忆" description="关闭后停止提取，也不会把已有记忆加入上下文。">
-        <input
-          type="checkbox"
+        <Checkbox
           checked={enabled}
-          onChange={(event) => {
-            const value = event.target.checked;
+          onCheckedChange={(checked) => {
+            const value = checked === true;
             setEnabled(value);
             void bridge?.setMemoryEnabled(value).catch((cause) => setError(String(cause)));
           }}
@@ -367,7 +370,7 @@ function MemoryPane() {
         {entries.map((entry) => (
           <div key={entry.id} className="rounded-lg border bg-card p-3">
             <div className="flex items-center gap-2">
-              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              <Badge variant="secondary">
                 {entry.kind === "fact"
                   ? "事实"
                   : entry.kind === "preference"
@@ -375,9 +378,9 @@ function MemoryPane() {
                     : entry.kind === "project"
                       ? "项目"
                       : "推断"}
-              </span>
-              <input
-                className="min-w-0 flex-1 bg-transparent text-sm font-medium outline-none"
+              </Badge>
+              <Input
+                className="min-w-0 flex-1 border-transparent bg-transparent font-medium shadow-none focus-visible:border-input"
                 defaultValue={entry.key}
                 onBlur={(event) =>
                   void bridge?.updateMemory(entry.id, { key: event.target.value })
@@ -394,8 +397,8 @@ function MemoryPane() {
                 <Trash2 />
               </Button>
             </div>
-            <textarea
-              className="mt-2 min-h-16 w-full resize-y rounded-md border bg-background p-2 text-xs"
+            <Textarea
+              className="mt-2 min-h-16 resize-y text-xs"
               defaultValue={entry.value}
               onBlur={(event) =>
                 void bridge?.updateMemory(entry.id, { value: event.target.value })

@@ -17,6 +17,7 @@ import { AiDialogs } from "@/features/ai/AiDialogs";
 import { bridge } from "@/lib/bridge";
 import { isMac } from "@/lib/platform";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 
 /** Windows / Linux 自绘窗口控制（macOS 用红绿灯） */
 function WindowControls() {
@@ -217,20 +218,24 @@ export default function App() {
                   : `下载未完成：${download.filename}`}
             </span>
             {download.state === "completed" && (
-              <button
-                className="ml-auto text-primary hover:underline"
+              <Button
+                variant="link"
+                size="sm"
+                className="ml-auto h-6 px-1"
                 onClick={() => void bridge?.openBrowserDownload(download.path)}
               >
                 打开
-              </button>
+              </Button>
             )}
-            <button
+            <Button
+              variant="ghost"
+              size="icon-sm"
               aria-label="关闭下载状态"
-              className="ml-1 text-muted-foreground hover:text-foreground"
+              className="ml-1 size-6 text-muted-foreground"
               onClick={() => setDownload(null)}
             >
               <X className="size-3.5" />
-            </button>
+            </Button>
           </div>
         )}
       </div>
