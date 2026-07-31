@@ -3,6 +3,21 @@ export interface BrowserDockPanel {
   tabId?: string;
 }
 
+export function createBrowserTabSnapshotGate<T>(
+  applySnapshot: (tabs: T[]) => void
+) {
+  let receivedEvent = false;
+  return {
+    acceptEvent(tabs: T[]) {
+      receivedEvent = true;
+      applySnapshot(tabs);
+    },
+    acceptInitial(tabs: T[]) {
+      if (!receivedEvent) applySnapshot(tabs);
+    },
+  };
+}
+
 export function findBrowserPanelsToClose(
   runtimeTabIds: ReadonlySet<string>,
   previouslyRegisteredTabIds: ReadonlySet<string>,

@@ -54,7 +54,10 @@ import { AssetPanel } from "@/features/files/AssetPanel";
 import { useAppStore, type ViewMode } from "@/store/useAppStore";
 import { bridge } from "@/lib/bridge";
 import type { BrowserTab } from "../../electron/browser-runtime";
-import { findBrowserPanelsToClose } from "@/features/files/browser-panel-sync";
+import {
+  createBrowserTabSnapshotGate,
+  findBrowserPanelsToClose,
+} from "@/features/files/browser-panel-sync";
 
 const LAYOUT_KEY = "mailuo-dock-v1";
 
@@ -635,8 +638,9 @@ export function DockLayout() {
       buildDefaultLayout(event.api);
     }
     if (bridge) {
-      void bridge.listBrowserTabs().then(syncBrowserPanels);
-      bridge.onBrowserTabs(syncBrowserPanels);
+      const snapshots = createBrowserTabSnapshotGate<BrowserTab>(syncBrowserPanels);
+      bridge.onBrowserTabs(snapshots.acceptEvent);
+      void bridge.listBrowserTabs().then(snapshots.acceptInitial);
     }
 
     // 恢复后的面板存在性 → 回写 store 开关

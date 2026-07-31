@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { findBrowserPanelsToClose } from "./browser-panel-sync";
+import {
+  createBrowserTabSnapshotGate,
+  findBrowserPanelsToClose,
+} from "./browser-panel-sync";
 
 describe("browser panel/runtime synchronization", () => {
   it("keeps a newly opened panel alive while its WebContents is registering", () => {
@@ -26,5 +29,17 @@ describe("browser panel/runtime synchronization", () => {
         },
       ])
     ).toEqual([`browser:${closedTabId}`]);
+  });
+
+  it("ignores a stale initial snapshot that resolves after a runtime event", () => {
+    const applied: string[][] = [];
+    const gate = createBrowserTabSnapshotGate<string>((tabIds) =>
+      applied.push([...tabIds])
+    );
+
+    gate.acceptEvent(["google-tab"]);
+    gate.acceptInitial([]);
+
+    expect(applied).toEqual([["google-tab"]]);
   });
 });
