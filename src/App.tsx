@@ -97,8 +97,8 @@ export default function App() {
   const assistantMode = useAppStore((s) => s.assistantMode);
   const panelLeft = useAppStore((s) => s.panelLeft);
   const locale = useAppStore((s) => s.settings.locale);
-  const browserAgentMode = useAppStore(
-    (s) => s.settings.browserAgentMode
+  const assistantPermissionMode = useAppStore(
+    (s) => s.settings.assistantPermissionMode
   );
 
   useEffect(() => {
@@ -110,8 +110,8 @@ export default function App() {
   }, [locale]);
 
   useEffect(() => {
-    void bridge?.setBrowserAgentMode(browserAgentMode);
-  }, [browserAgentMode]);
+    void bridge?.setAssistantPermissionMode(assistantPermissionMode);
+  }, [assistantPermissionMode]);
 
   useEffect(() => {
     return bridge?.onBrowserDownload((event) => {

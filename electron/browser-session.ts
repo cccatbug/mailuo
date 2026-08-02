@@ -30,6 +30,35 @@ const PROMPT_PERMISSIONS = new Set([
   "storage-access",
 ]);
 const FIDO_HID_USAGE_PAGE = 0xf1d0;
+const AUTH_POPUP_PATTERN =
+  /(?:^|[./?&=_-])(auth|authen|authorize|cas|login|oauth|passport|signin|sso)(?:[./?&=_-]|$)/i;
+
+interface WindowOpenRouteDetails {
+  url: string;
+  frameName?: string;
+  features?: string;
+  postBody?: unknown;
+}
+
+/**
+ * 仅保留确实依赖 opener/POST 的认证弹窗；普通文档交给 Dock 浏览器 Tab。
+ * about/blob/data 无法安全地在另一个 WebContents 中重放，也必须保留原 contents。
+ */
+export function shouldKeepBrowserPopup(
+  details: WindowOpenRouteDetails
+): boolean {
+  if (details.postBody) return true;
+  if (/^(about:|blob:|data:)/i.test(details.url)) return true;
+  if (AUTH_POPUP_PATTERN.test(details.url)) return true;
+
+  const frameName = details.frameName?.trim().toLowerCase();
+  if (frameName && !["_blank", "_self", "_parent", "_top"].includes(frameName)) {
+    return true;
+  }
+  return /(?:^|,)\s*popup(?:\s*=\s*(?:1|yes|true))?(?:,|$)/i.test(
+    details.features ?? ""
+  );
+}
 
 function isSecureOrigin(rawOrigin: string | undefined): boolean {
   if (!rawOrigin) return false;
@@ -261,10 +290,18 @@ export class BrowserSessionManager {
       this.configureContents(child.webContents, true);
     };
     contents.on("did-create-window", onCreatedWindow);
-    contents.setWindowOpenHandler(({ url }) => {
+    contents.setWindowOpenHandler((details) => {
+      const { url } = details;
       if (isExternalBrowserProtocol(url)) {
         void shell.openExternal(url);
         return { action: "deny" };
+      }
+      if (!shouldKeepBrowserPopup(details)) {
+        const parent = this.getParentWindow?.();
+        if (parent) {
+          parent.webContents.send("browser:open-tab", url);
+          return { action: "deny" };
+        }
       }
       return {
         action: "allow",

@@ -6,9 +6,12 @@ import {
   Brain,
   Check,
   ChevronRight,
+  CircleDashed,
   CircleCheck,
   FileImage,
   FileText,
+  ListChecks,
+  LoaderCircle,
   Terminal,
   Settings2,
   Wrench,
@@ -20,6 +23,16 @@ import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import { assistantReset, assistantSend } from "@/lib/ai";
 import {
   bridge,
@@ -54,6 +67,10 @@ import type {
   BrowserTabMention,
 } from "@/shared/browser";
 import { mentionKey, mentionLabel } from "./mentions";
+import type {
+  AssistantApprovalRequest,
+  AssistantTodoItem,
+} from "@/shared/assistant";
 
 /* ---------- 消息模型：分段时间线（文本 / 思考 / 工具） ---------- */
 
@@ -83,6 +100,8 @@ export interface Message {
   attachments?: AssistantAttachmentMeta[];
   assets?: AssetReference[];
   mentions?: AssistantMention[];
+  /** 小枢为本轮复杂工作自行维护的执行计划。 */
+  todos?: AssistantTodoItem[];
 }
 
 export interface Conversation {
@@ -112,6 +131,7 @@ interface ChatStore {
   currentId: string | null;
   busy: boolean;
   contextUsage?: AssistantContextUsage;
+  approvals: AssistantApprovalRequest[];
   /** pi 会话与 UI 历史脱节（切换过会话/重启后），下次发送需附带上下文摘录 */
   stale: boolean;
   set: (p: Partial<ChatStore>) => void;
@@ -122,6 +142,7 @@ export const useChat = create<ChatStore>((set) => ({
   currentId: null,
   busy: false,
   contextUsage: undefined,
+  approvals: [],
   stale: false,
   set,
 }));
@@ -178,7 +199,12 @@ function ensureConversation(projectId: string): Conversation {
 export function resetShuConversation() {
   useChat
     .getState()
-    .set({ currentId: null, contextUsage: undefined, stale: false });
+    .set({
+      currentId: null,
+      contextUsage: undefined,
+      approvals: [],
+      stale: false,
+    });
   void assistantReset();
   toast("已开启新对话");
 }
@@ -187,7 +213,7 @@ export function resetShuConversation() {
 export function switchConversation(id: string) {
   useChat
     .getState()
-    .set({ currentId: id, contextUsage: undefined, stale: true });
+    .set({ currentId: id, contextUsage: undefined, approvals: [], stale: true });
   void assistantReset();
 }
 
@@ -196,7 +222,7 @@ export function deleteConversation(id: string) {
   set({
     conversations: conversations.filter((c) => c.id !== id),
     currentId: currentId === id ? null : currentId,
-    ...(currentId === id ? { contextUsage: undefined } : {}),
+    ...(currentId === id ? { contextUsage: undefined, approvals: [] } : {}),
   });
   persistChats();
 }
@@ -405,7 +431,18 @@ async function completeAssistantTurn({
   };
 
   const onEvent = (e: AssistantEventPayload) => {
-    if (e.type === "attachments") {
+    if (e.type === "approval") {
+      const state = useChat.getState();
+      state.set({
+        approvals: [
+          ...state.approvals.filter((item) => item.id !== e.request.id),
+          e.request,
+        ],
+      });
+    } else if (e.type === "todos") {
+      patchLast((message) => ({ ...message, todos: e.todos }));
+      persistChats();
+    } else if (e.type === "attachments") {
       patchLatestUserAttachments(e.attachments);
     } else if (e.type === "delta" && e.text) {
       fullText += e.text;
@@ -440,6 +477,7 @@ async function completeAssistantTurn({
       });
     } else if (e.type === "tool_start") {
       segText = "";
+      if (e.name === "todo_write") return;
       patchLast((m) => ({
         ...m,
         parts: [
@@ -532,7 +570,7 @@ async function completeAssistantTurn({
     }));
     persistChats();
   } finally {
-    useChat.getState().set({ busy: false });
+    useChat.getState().set({ busy: false, approvals: [] });
   }
 }
 
@@ -616,6 +654,74 @@ function ThinkingPart({ text }: { text: string }) {
   );
 }
 
+function AssistantTodoPlan({ todos }: { todos: AssistantTodoItem[] }) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(true);
+  const completed = todos.filter((todo) => todo.status === "completed").length;
+  const progress = todos.length === 0 ? 0 : (completed / todos.length) * 100;
+
+  return (
+    <Card size="sm">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <ListChecks className="size-4" />
+          {t("assistant.executionPlan")}
+          <Badge variant="secondary">
+            {completed}/{todos.length}
+          </Badge>
+        </CardTitle>
+        <CardAction>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={
+              expanded
+                ? t("assistant.collapsePlan")
+                : t("assistant.expandPlan")
+            }
+            onClick={() => setExpanded((value) => !value)}
+          >
+            <ChevronRight className={cn(expanded && "rotate-90")} />
+          </Button>
+        </CardAction>
+      </CardHeader>
+      {expanded && (
+        <CardContent className="flex flex-col gap-2.5">
+          <Progress
+            value={progress}
+            aria-label={t("assistant.planProgress", {
+              completed,
+              total: todos.length,
+            })}
+          />
+          <ol className="flex flex-col gap-2">
+            {todos.map((todo) => (
+              <li key={todo.id} className="flex items-start gap-2 text-xs">
+                {todo.status === "completed" ? (
+                  <CircleCheck className="mt-0.5 size-4 shrink-0 text-primary" />
+                ) : todo.status === "in_progress" ? (
+                  <LoaderCircle className="mt-0.5 size-4 shrink-0 animate-spin text-primary" />
+                ) : (
+                  <CircleDashed className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                )}
+                <span
+                  className={cn(
+                    "leading-relaxed",
+                    todo.status === "completed" &&
+                      "text-muted-foreground line-through"
+                  )}
+                >
+                  {todo.text}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </CardContent>
+      )}
+    </Card>
+  );
+}
+
 function UserAttachment({
   attachment,
 }: {
@@ -688,6 +794,7 @@ export function AssistantPanel() {
   const currentId = useChat((s) => s.currentId);
   const busy = useChat((s) => s.busy);
   const contextUsage = useChat((s) => s.contextUsage);
+  const assistantApprovals = useChat((s) => s.approvals);
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
   const [assistantStatus, setAssistantStatus] =
     useState<RouteResolutionStatus | null>(null);
@@ -706,7 +813,7 @@ export function AssistantPanel() {
       lastProjectRef.current = selectedProjectId;
       useChat
         .getState()
-        .set({ currentId: null, contextUsage: undefined });
+        .set({ currentId: null, contextUsage: undefined, approvals: [] });
       void assistantReset();
     }
   }, [selectedProjectId]);
@@ -742,6 +849,16 @@ export function AssistantPanel() {
     return () =>
       window.removeEventListener("mailuo-ai-runtime-changed", onRuntimeChanged);
   }, []);
+
+  const assistantPermissionMode = useAppStore(
+    (state) => state.settings.assistantPermissionMode
+  );
+  useEffect(() => {
+    if (assistantPermissionMode === "yolo") {
+      useChat.getState().set({ approvals: [] });
+      setBrowserApprovals([]);
+    }
+  }, [assistantPermissionMode]);
 
   useEffect(() => {
     const pending = new Set<string>();
@@ -881,6 +998,9 @@ export function AssistantPanel() {
                   </div>
                 ) : (
                   <div className="flex w-[94%] flex-col gap-1.5">
+                    {m.todos && m.todos.length > 0 && (
+                      <AssistantTodoPlan todos={m.todos} />
+                    )}
                     {(m.parts ?? []).map((p, j) =>
                       p.kind === "text" ? (
                         p.text ? (
@@ -989,6 +1109,64 @@ export function AssistantPanel() {
           </Button>
         </div>
       )}
+
+      {assistantApprovals.map((approval) => (
+        <Alert key={approval.id} className="mx-3 mb-2 w-auto">
+          <ShieldAlert />
+          <AlertTitle>
+            {t("assistant.approvalTitle", {
+              label: t(`assistant.toolLabels.${approval.toolName}`, {
+                defaultValue: approval.label,
+              }),
+            })}
+          </AlertTitle>
+          <AlertDescription className="flex flex-col gap-2">
+            <p className="break-all font-mono text-xs">{approval.summary}</p>
+            <p>
+              {t(
+                approval.reason === "read-only"
+                  ? "assistant.approvalReadOnly"
+                  : "assistant.approvalMutation"
+              )}
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  bridge?.respondAssistantApproval({
+                    id: approval.id,
+                    allowed: false,
+                  });
+                  useChat.getState().set({
+                    approvals: useChat
+                      .getState()
+                      .approvals.filter((item) => item.id !== approval.id),
+                  });
+                }}
+              >
+                {t("common.deny")}
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  bridge?.respondAssistantApproval({
+                    id: approval.id,
+                    allowed: true,
+                  });
+                  useChat.getState().set({
+                    approvals: useChat
+                      .getState()
+                      .approvals.filter((item) => item.id !== approval.id),
+                  });
+                }}
+              >
+                {t("common.allowOnce")}
+              </Button>
+            </div>
+          </AlertDescription>
+        </Alert>
+      ))}
 
       {browserApprovals.map((approval) => (
         <div

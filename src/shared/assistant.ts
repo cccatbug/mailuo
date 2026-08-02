@@ -23,10 +23,40 @@ export interface AssistantContextUsage {
   percent: number | null;
 }
 
+/** 小枢的全局执行权限；同时作用于文件、命令与内置浏览器。 */
+export type AssistantPermissionMode =
+  | "confirm-sensitive"
+  | "read-only"
+  | "yolo";
+
+export interface AssistantApprovalRequest {
+  id: string;
+  toolName: string;
+  label: string;
+  summary: string;
+  reason: "mutation" | "read-only";
+}
+
+export interface AssistantApprovalResponse {
+  id: string;
+  allowed: boolean;
+}
+
+export type AssistantTodoStatus = "pending" | "in_progress" | "completed";
+
+/** Agent 的会话执行计划，不会混入用户的项目任务。 */
+export interface AssistantTodoItem {
+  id: string;
+  text: string;
+  status: AssistantTodoStatus;
+}
+
 export type AssistantEventPayload =
   | { type: "delta"; text: string }
   | { type: "thinking"; text: string }
   | { type: "attachments"; attachments: AssistantAttachmentMeta[] }
+  | { type: "approval"; request: AssistantApprovalRequest }
+  | { type: "todos"; todos: AssistantTodoItem[] }
   | {
       type: "tool_start";
       id: string;

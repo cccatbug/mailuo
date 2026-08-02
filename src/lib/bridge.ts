@@ -1,6 +1,8 @@
 import type {
+  AssistantApprovalResponse,
   AssistantAttachmentPayload,
   AssistantEventPayload,
+  AssistantPermissionMode,
 } from "@/shared/assistant";
 import type {
   AiConfigSnapshot,
@@ -75,6 +77,8 @@ export interface MailuoApi {
     context?: AiRequestContext,
     modelOverride?: AiModelRef | null
   ) => Promise<void>;
+  setAssistantPermissionMode: (mode: AssistantPermissionMode) => Promise<void>;
+  respondAssistantApproval: (response: AssistantApprovalResponse) => void;
   getAiConfig: () => Promise<AiConfigSnapshot>;
   reloadAiConfig: () => Promise<AiConfigSnapshot>;
   saveAiConfig: (

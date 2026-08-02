@@ -16,7 +16,7 @@ import {
   type ThemeMode,
   type ThemePalette,
 } from "@/lib/theme";
-import type { BrowserAgentMode } from "@/shared/browser";
+import type { AssistantPermissionMode } from "@/shared/assistant";
 
 export type ViewMode = "list" | "graph" | "stats" | "matrix";
 export type { Theme, ThemeMode, ThemePalette } from "@/lib/theme";
@@ -32,7 +32,8 @@ export interface AppSettings {
   /** 标题字体 */
   fontHeading: "serif" | "sans";
   locale: Locale;
-  browserAgentMode: BrowserAgentMode;
+  /** 小枢对文件、命令与浏览器操作的全局授权方式。 */
+  assistantPermissionMode: AssistantPermissionMode;
 }
 
 const FONT_STACKS = {
@@ -158,25 +159,34 @@ const DEFAULT_SETTINGS: AppSettings = {
   fontBody: "sans",
   fontHeading: "serif",
   locale: "zh-CN",
-  browserAgentMode: "confirm-sensitive",
+  assistantPermissionMode: "confirm-sensitive",
 };
 
 function loadSettings(): AppSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
     if (!raw) return DEFAULT_SETTINGS;
-    const stored = JSON.parse(raw) as Partial<AppSettings>;
+    const stored = JSON.parse(raw) as Partial<AppSettings> & {
+      /** v0.1.7 及更早版本的浏览器专用权限。 */
+      browserAgentMode?: "confirm-sensitive" | "always-allow" | "read-only";
+    };
+    const assistantPermissionMode: AssistantPermissionMode =
+      stored.assistantPermissionMode === "yolo" ||
+      stored.assistantPermissionMode === "read-only" ||
+      stored.assistantPermissionMode === "confirm-sensitive"
+        ? stored.assistantPermissionMode
+        : stored.browserAgentMode === "always-allow"
+          ? "yolo"
+          : stored.browserAgentMode === "read-only"
+            ? "read-only"
+            : "confirm-sensitive";
     return {
       uiScale:
         typeof stored.uiScale === "number" ? stored.uiScale : DEFAULT_SETTINGS.uiScale,
       fontBody: stored.fontBody === "serif" ? "serif" : "sans",
       fontHeading: stored.fontHeading === "sans" ? "sans" : "serif",
       locale: stored.locale === "en" ? "en" : "zh-CN",
-      browserAgentMode:
-        stored.browserAgentMode === "always-allow" ||
-        stored.browserAgentMode === "read-only"
-          ? stored.browserAgentMode
-          : "confirm-sensitive",
+      assistantPermissionMode,
     };
   } catch {
     return DEFAULT_SETTINGS;

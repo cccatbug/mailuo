@@ -25,7 +25,12 @@ import {
   workspaceDir,
   writeMailuoFile,
 } from "./pi";
-import type { AssistantAttachmentPayload } from "../src/shared/assistant";
+import type {
+  AssistantApprovalResponse,
+  AssistantAttachmentPayload,
+  AssistantPermissionMode,
+} from "../src/shared/assistant";
+import { ASSISTANT_CONTROL } from "./assistant-control";
 import {
   aiProviderConfigSchema,
   aiCredentialDraftSchema,
@@ -395,6 +400,27 @@ function registerIpc() {
       BROWSER_RUNTIME.setApprovalMode(mode);
     }
   );
+  ipcMain.handle(
+    "assistant:permission-mode",
+    (_event, mode: AssistantPermissionMode) => {
+      if (![
+        "confirm-sensitive",
+        "read-only",
+        "yolo",
+      ].includes(mode)) {
+        throw new Error("无效的小枢权限模式");
+      }
+      ASSISTANT_CONTROL.setPermissionMode(mode);
+      BROWSER_RUNTIME.setApprovalMode(
+        mode === "yolo" ? "always-allow" : mode
+      );
+    }
+  );
+  ipcMain.on(
+    "assistant:approval-response",
+    (_event, response: AssistantApprovalResponse) =>
+      ASSISTANT_CONTROL.settleApproval(response)
+  );
 
   ipcMain.handle("agent:models", () => listModels());
   ipcMain.handle("agent:skills", () => listSkills());
@@ -575,6 +601,7 @@ function registerIpc() {
   );
   ipcMain.handle("assistant:reset", () => {
     BROWSER_RUNTIME.cancelPending();
+    ASSISTANT_CONTROL.cancelPending();
     assistantReset();
   });
 

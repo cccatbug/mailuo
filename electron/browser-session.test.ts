@@ -15,6 +15,7 @@ import {
   BrowserSessionManager,
   cleanElectronUserAgent,
   isExternalBrowserProtocol,
+  shouldKeepBrowserPopup,
 } from "./browser-session";
 
 describe("browser session compatibility", () => {
@@ -82,5 +83,57 @@ describe("browser session compatibility", () => {
       );
       expect(typeof (response as { createWindow?: unknown })?.createWindow).toBe("function");
     }
+  });
+
+  it("distinguishes authentication popups from ordinary documents", () => {
+    expect(
+      shouldKeepBrowserPopup({
+        url: "https://mi.feishu.cn/docx/position-api",
+        frameName: "_blank",
+      })
+    ).toBe(false);
+    expect(
+      shouldKeepBrowserPopup({ url: "https://cas.example.com/login" })
+    ).toBe(true);
+    expect(
+      shouldKeepBrowserPopup({
+        url: "https://accounts.example.com/authorize?client_id=mailuo",
+      })
+    ).toBe(true);
+    expect(shouldKeepBrowserPopup({ url: "about:blank" })).toBe(true);
+  });
+
+  it("routes ordinary document windows into an internal browser tab", () => {
+    let openHandler:
+      | ((details: { url: string; disposition: string }) => {
+          action: string;
+        })
+      | undefined;
+    const send = vi.fn();
+    const manager = new BrowserSessionManager();
+    Object.assign(manager, {
+      getParentWindow: () => ({ webContents: { send } }),
+    });
+    const contents = {
+      id: 43,
+      setBackgroundThrottling: vi.fn(),
+      setWindowOpenHandler: vi.fn((handler) => {
+        openHandler = handler;
+      }),
+      on: vi.fn(),
+      once: vi.fn(),
+      isDestroyed: vi.fn(() => false),
+      navigationHistory: {
+        canGoBack: vi.fn(() => false),
+        goBack: vi.fn(),
+      },
+    };
+    manager.configureContents(contents as never);
+
+    const url = "https://mi.feishu.cn/docx/position-api";
+    const response = openHandler?.({ url, disposition: "new-window" });
+
+    expect(response?.action).toBe("deny");
+    expect(send).toHaveBeenCalledWith("browser:open-tab", url);
   });
 });

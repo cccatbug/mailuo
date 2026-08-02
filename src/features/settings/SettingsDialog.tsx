@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   Bot,
   Copy,
+  Cpu,
   Database,
   FolderOpen,
   Globe2,
@@ -50,6 +51,7 @@ import type { ThemeMode, ThemePalette } from "@/lib/theme";
 import { seedData } from "@/store/seed";
 import { AiSettingsPane } from "./AiSettingsPane";
 import { BrowserSettingsPane } from "./BrowserSettingsPane";
+import { AssistantSettingsPane } from "./AssistantSettingsPane";
 import packageInfo from "../../../package.json";
 
 /* ---------- Obsidian 式设置行：左侧名称+描述，右侧控件 ---------- */
@@ -393,7 +395,8 @@ function AboutPane() {
 
 const PANES = [
   { key: "appearance", label: "外观", icon: Palette, pane: AppearancePane },
-  { key: "ai", label: "AI", icon: Bot, pane: AiSettingsPane },
+  { key: "ai", label: "AI", icon: Cpu, pane: AiSettingsPane },
+  { key: "assistant", label: "小枢", icon: Bot, pane: AssistantSettingsPane },
   { key: "browser", label: "浏览器", icon: Globe2, pane: BrowserSettingsPane },
   { key: "data", label: "数据", icon: Database, pane: DataPane },
   { key: "about", label: "关于", icon: Info, pane: AboutPane },

@@ -29,6 +29,11 @@ import {
 import { AgentTurnAccumulator } from "./agent-turn";
 import { createBrowserTools } from "./browser-tools";
 import { BROWSER_CONTROL } from "./browser-runtime";
+import {
+  ASSISTANT_CONTROL,
+  assistantPermissionExtension,
+  createTodoTool,
+} from "./assistant-control";
 import { assembleAiContext } from "./context-assembly";
 import {
   ASSISTANT_SYSTEM_PROMPT,
@@ -238,10 +243,15 @@ async function makeSession(
     noPromptTemplates: true,
     noThemes: true,
     noContextFiles: true,
+    extensionFactories: opts.withTools
+      ? [assistantPermissionExtension]
+      : [],
     systemPromptOverride: () => fullSystem,
   });
   await resourceLoader.reload();
-  const customTools = opts.withTools ? createBrowserTools(cwd) : [];
+  const customTools = opts.withTools
+    ? [...createBrowserTools(cwd), createTodoTool()]
+    : [];
 
   const { session } = await createAgentSession({
     cwd,
@@ -266,6 +276,7 @@ async function makeSession(
           "browser_snapshot",
           "browser_act",
           "browser_capture",
+          "todo_write",
         ]
       : [],
     customTools,
@@ -576,6 +587,7 @@ export async function assistantSend(
   ) {
     throw new Error("当前模型不支持图片输入，请切换到支持视觉的模型");
   }
+  ASSISTANT_CONTROL.beginTurn(emit);
 
   const turn = new AgentTurnAccumulator({
     onTextDelta: (text) => emit({ type: "delta", text }),
@@ -655,11 +667,13 @@ export async function assistantSend(
     throw new Error(msg);
   } finally {
     BROWSER_CONTROL.setDefaultTabIds([]);
+    ASSISTANT_CONTROL.endTurn(emit);
     unsubscribe();
   }
 }
 
 export function assistantReset(): void {
+  ASSISTANT_CONTROL.cancelPending();
   assistant?.session.dispose();
   assistant = null;
 }

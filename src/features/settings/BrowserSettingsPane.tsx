@@ -16,15 +16,6 @@ import {
   bridge,
   type BrowserSessionSnapshot,
 } from "@/lib/bridge";
-import { useAppStore } from "@/store/useAppStore";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import type { BrowserAgentMode } from "@/shared/browser";
 
 function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`;
@@ -34,8 +25,6 @@ function formatBytes(value: number): string {
 
 export function BrowserSettingsPane() {
   const { t } = useTranslation();
-  const settings = useAppStore((state) => state.settings);
-  const setSettings = useAppStore((state) => state.setSettings);
   const [snapshot, setSnapshot] = useState<BrowserSessionSnapshot | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -97,7 +86,7 @@ export function BrowserSettingsPane() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6">
       <div>
         <h2 className="font-heading text-xl font-bold">
           {t("browser.title")}
@@ -107,47 +96,6 @@ export function BrowserSettingsPane() {
           弹窗共享 Cookie、缓存与认证信息。
         </p>
       </div>
-
-      <section className="rounded-xl border bg-card p-4">
-        <div className="flex items-center justify-between gap-6">
-          <div>
-            <h3 className="text-sm font-medium">{t("browser.agentMode")}</h3>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {t("browser.agentModeDescription")}
-            </p>
-          </div>
-          <Select
-            value={settings.browserAgentMode}
-            onValueChange={(value) =>
-              setSettings({
-                browserAgentMode: value as BrowserAgentMode,
-              })
-            }
-          >
-            <SelectTrigger size="sm" className="w-44">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="confirm-sensitive">
-                {t("browser.confirmSensitive")}
-              </SelectItem>
-              <SelectItem value="always-allow">
-                {t("browser.alwaysAllow")}
-              </SelectItem>
-              <SelectItem value="read-only">
-                {t("browser.readOnly")}
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <p className="mt-3 rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
-          {settings.browserAgentMode === "always-allow"
-            ? t("browser.alwaysAllowDescription")
-            : settings.browserAgentMode === "read-only"
-              ? t("browser.readOnlyDescription")
-              : t("browser.confirmSensitiveDescription")}
-        </p>
-      </section>
 
       <section className="overflow-hidden rounded-xl border bg-card">
         <div className="flex items-center gap-3 border-b p-4">

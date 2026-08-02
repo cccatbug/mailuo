@@ -1,7 +1,9 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
+  AssistantApprovalResponse,
   AssistantAttachmentPayload,
   AssistantEventPayload,
+  AssistantPermissionMode,
 } from "../src/shared/assistant";
 import type {
   AiConfigSnapshot,
@@ -72,6 +74,11 @@ const api = {
       context,
       modelOverride
     ),
+
+  setAssistantPermissionMode: (mode: AssistantPermissionMode): Promise<void> =>
+    ipcRenderer.invoke("assistant:permission-mode", mode),
+  respondAssistantApproval: (response: AssistantApprovalResponse): void =>
+    ipcRenderer.send("assistant:approval-response", response),
 
   getAiConfig: (): Promise<AiConfigSnapshot> =>
     ipcRenderer.invoke("ai:config:get"),

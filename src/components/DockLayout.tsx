@@ -28,6 +28,9 @@ import {
   X,
   CopyX,
   ListX,
+  LockKeyhole,
+  ShieldCheck,
+  Zap,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
@@ -36,6 +39,8 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -59,6 +64,10 @@ import { AssetPanel } from "@/features/files/AssetPanel";
 import { useAppStore, type ViewMode } from "@/store/useAppStore";
 import { bridge } from "@/lib/bridge";
 import { closeDockPanels } from "./dock-menu";
+import {
+  getDockPanelRenderer,
+  preserveRestoredBrowserPanels,
+} from "./dock-panel-renderer";
 
 const LAYOUT_KEY = "mailuo-dock-v1";
 
@@ -185,6 +194,7 @@ export function openBrowserPanel(
   api.addPanel({
     id,
     component: "browser",
+    renderer: getDockPanelRenderer("browser"),
     title: "浏览器",
     minimumWidth: 420,
     params: { url },
@@ -349,8 +359,13 @@ function TasksActions() {
 }
 
 function ShuActions() {
+  const { t } = useTranslation();
   const mode = useAppStore((s) => s.assistantMode);
   const setMode = useAppStore((s) => s.setAssistantMode);
+  const permissionMode = useAppStore(
+    (state) => state.settings.assistantPermissionMode
+  );
+  const setSettings = useAppStore((state) => state.setSettings);
   const selectedProjectId = useAppStore((s) => s.selectedProjectId);
   const conversations = useChat((s) => s.conversations);
   const currentId = useChat((s) => s.currentId);
@@ -360,6 +375,54 @@ function ShuActions() {
     .slice(0, 15);
   return (
     <div className="flex h-full items-center pr-1.5">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={t("assistant.permissionMenu")}
+            className={cn(
+              "size-6 text-muted-foreground hover:text-foreground",
+              permissionMode === "yolo" && "text-primary"
+            )}
+          >
+            {permissionMode === "yolo" ? (
+              <Zap />
+            ) : permissionMode === "read-only" ? (
+              <LockKeyhole />
+            ) : (
+              <ShieldCheck />
+            )}
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-64">
+          <DropdownMenuLabel>{t("assistant.permissionMenu")}</DropdownMenuLabel>
+          <DropdownMenuRadioGroup
+            value={permissionMode}
+            onValueChange={(value) =>
+              setSettings({
+                assistantPermissionMode: value as
+                  | "confirm-sensitive"
+                  | "read-only"
+                  | "yolo",
+              })
+            }
+          >
+            {(["confirm-sensitive", "read-only", "yolo"] as const).map(
+              (value) => (
+                <DropdownMenuRadioItem key={value} value={value}>
+                  <span className="flex min-w-0 flex-col">
+                    <span>{t(`assistant.modes.${value}`)}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {t(`assistant.modes.${value}Description`)}
+                    </span>
+                  </span>
+                </DropdownMenuRadioItem>
+              )
+            )}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
@@ -634,6 +697,7 @@ export function DockLayout() {
     if (!restored || event.api.panels.length === 0) {
       buildDefaultLayout(event.api);
     }
+    preserveRestoredBrowserPanels(event.api.panels);
 
     // 恢复后的面板存在性 → 回写 store 开关
     const store = useAppStore.getState();
