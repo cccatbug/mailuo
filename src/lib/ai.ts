@@ -23,23 +23,30 @@ export async function runAgent(opts: {
   );
 }
 
-/** 通过常驻 pi SDK 会话发送消息，全事件流式回调（文本/思考/工具），回合结束 resolve。 */
-export async function assistantSend(
+export interface AssistantTurnHandle {
+  requestId: string;
+  completion: Promise<void>;
+  abort: () => Promise<boolean>;
+}
+
+/** 启动常驻小枢回合，并返回可精确中断该 request 的句柄。 */
+export function startAssistantTurn(
   message: string,
   projectId: string,
+  conversationId: string,
   attachments: AssistantAttachmentPayload[],
   context: AiRequestContext,
   modelOverride: AiModelRef | null | undefined,
   onEvent: (event: AssistantEventPayload) => void
-): Promise<void> {
+): AssistantTurnHandle {
   const b = bridge;
   if (!b) throw new Error("AI 能力仅在桌面应用中可用");
   const requestId = crypto.randomUUID();
-  return new Promise((resolve, reject) => {
+  const completion = new Promise<void>((resolve, reject) => {
     const unsubscribe = b.onAssistantEvent(
       (id: string, event: AssistantEventPayload) => {
         if (id !== requestId) return;
-        if (event.type === "done") {
+        if (event.type === "done" || event.type === "aborted") {
           unsubscribe();
           onEvent(event);
           resolve();
@@ -55,6 +62,7 @@ export async function assistantSend(
       requestId,
       message,
       projectId,
+      conversationId,
       attachments,
       context,
       modelOverride
@@ -63,6 +71,11 @@ export async function assistantSend(
       reject(e instanceof Error ? e : new Error(String(e)));
     });
   });
+  return {
+    requestId,
+    completion,
+    abort: () => b.assistantAbort(requestId),
+  };
 }
 
 export async function assistantReset(): Promise<void> {

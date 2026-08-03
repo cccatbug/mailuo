@@ -11,7 +11,9 @@ import path from "node:path";
 import {
   AI_CONFIG,
   AI_RUNTIME,
+  MEMORY_ENGINE,
   appendMemory,
+  assistantAbort,
   assistantReset,
   assistantSend,
   listModels,
@@ -30,6 +32,7 @@ import type {
   AssistantAttachmentPayload,
   AssistantPermissionMode,
 } from "../src/shared/assistant";
+import type { MemoryKind, UpdateMemoryInput } from "../src/shared/memory";
 import { ASSISTANT_CONTROL } from "./assistant-control";
 import {
   aiProviderConfigSchema,
@@ -552,6 +555,28 @@ function registerIpc() {
   );
   ipcMain.handle("mailuo:memory-path", () => memoryPath());
   ipcMain.handle("mailuo:memory-append", (_e, note: string) => appendMemory(note));
+  ipcMain.handle("memory:snapshot", () => MEMORY_ENGINE.snapshot());
+  ipcMain.handle("memory:set-enabled", (_e, enabled: boolean) =>
+    MEMORY_ENGINE.setEnabled(Boolean(enabled))
+  );
+  ipcMain.handle(
+    "memory:remember",
+    (_e, content: string, projectId?: string, kind?: MemoryKind) =>
+      MEMORY_ENGINE.remember({
+        content,
+        ...(kind ? { kind } : {}),
+        scope: projectId
+          ? { type: "project", projectId }
+          : { type: "global" },
+        source: "explicit",
+      })
+  );
+  ipcMain.handle(
+    "memory:update",
+    (_e, id: string, patch: UpdateMemoryInput) => MEMORY_ENGINE.update(id, patch)
+  );
+  ipcMain.handle("memory:delete", (_e, id: string) => MEMORY_ENGINE.delete(id));
+  ipcMain.handle("memory:rebuild", () => MEMORY_ENGINE.rebuild());
   ipcMain.handle("mailuo:workspace-dir", (_e, projectId: string) =>
     workspaceDir(projectId)
   );
@@ -582,13 +607,16 @@ function registerIpc() {
       requestId: string,
       message: string,
       projectId: string,
+      conversationId: string,
       attachments: AssistantAttachmentPayload[],
       context: AiRequestContext | undefined,
       modelOverride: AiModelRef | null | undefined
     ) =>
       assistantSend(
+        requestId,
         message,
         projectId ?? "default",
+        conversationId,
         attachments ?? [],
         context ? aiRequestContextSchema.parse(context) : undefined,
         modelOverride ? aiModelRefSchema.parse(modelOverride) : undefined,
@@ -599,6 +627,11 @@ function registerIpc() {
         }
       )
   );
+  ipcMain.handle("assistant:abort", async (_e, requestId: string) => {
+    BROWSER_RUNTIME.cancelPending();
+    ASSISTANT_CONTROL.cancelPending();
+    return assistantAbort(requestId);
+  });
   ipcMain.handle("assistant:reset", () => {
     BROWSER_RUNTIME.cancelPending();
     ASSISTANT_CONTROL.cancelPending();

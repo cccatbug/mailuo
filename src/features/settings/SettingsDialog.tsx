@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   Bot,
+  BrainCircuit,
   Copy,
   Cpu,
   Database,
@@ -52,6 +53,7 @@ import { seedData } from "@/store/seed";
 import { AiSettingsPane } from "./AiSettingsPane";
 import { BrowserSettingsPane } from "./BrowserSettingsPane";
 import { AssistantSettingsPane } from "./AssistantSettingsPane";
+import { MemorySettingsPane } from "./MemorySettingsPane";
 import packageInfo from "../../../package.json";
 
 /* ---------- Obsidian 式设置行：左侧名称+描述，右侧控件 ---------- */
@@ -398,6 +400,7 @@ const PANES = [
   { key: "appearance", label: "外观", icon: Palette, pane: AppearancePane },
   { key: "ai", label: "AI", icon: Cpu, pane: AiSettingsPane },
   { key: "assistant", label: "小枢", icon: Bot, pane: AssistantSettingsPane },
+  { key: "memory", label: "记忆", icon: BrainCircuit, pane: MemorySettingsPane },
   { key: "browser", label: "浏览器", icon: Globe2, pane: BrowserSettingsPane },
   { key: "data", label: "数据", icon: Database, pane: DataPane },
   { key: "about", label: "关于", icon: Info, pane: AboutPane },
@@ -407,6 +410,17 @@ export function SettingsDialog() {
   const open = useAppStore((s) => s.settingsOpen);
   const setOpen = useAppStore((s) => s.setSettingsOpen);
   const [active, setActive] = useState<(typeof PANES)[number]["key"]>("appearance");
+
+  useEffect(() => {
+    const openPane = (event: Event) => {
+      const key = (event as CustomEvent<string>).detail;
+      if (PANES.some((pane) => pane.key === key)) {
+        setActive(key as (typeof PANES)[number]["key"]);
+      }
+    };
+    window.addEventListener("mailuo-open-settings-pane", openPane);
+    return () => window.removeEventListener("mailuo-open-settings-pane", openPane);
+  }, []);
 
   const ActivePane = PANES.find((p) => p.key === active)?.pane ?? AppearancePane;
 

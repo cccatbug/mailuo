@@ -32,6 +32,12 @@ import type {
   BrowserTabRegistration,
   BrowserTabUpdate,
 } from "@/shared/browser";
+import type {
+  MemoryEntry,
+  MemoryKind,
+  MemorySnapshot,
+  UpdateMemoryInput,
+} from "@/shared/memory";
 
 export interface BrowserSessionSnapshot {
   persistent: boolean;
@@ -73,10 +79,12 @@ export interface MailuoApi {
     requestId: string,
     message: string,
     projectId: string,
+    conversationId: string,
     attachments: AssistantAttachmentPayload[],
     context?: AiRequestContext,
     modelOverride?: AiModelRef | null
   ) => Promise<void>;
+  assistantAbort: (requestId: string) => Promise<boolean>;
   setAssistantPermissionMode: (mode: AssistantPermissionMode) => Promise<void>;
   respondAssistantApproval: (response: AssistantApprovalResponse) => void;
   getAiConfig: () => Promise<AiConfigSnapshot>;
@@ -121,6 +129,16 @@ export interface MailuoApi {
   writeFile: (p: string, content: string) => Promise<void>;
   memoryPath: () => Promise<string>;
   memoryAppend: (note: string) => Promise<void>;
+  getMemory: () => Promise<MemorySnapshot>;
+  setMemoryEnabled: (enabled: boolean) => Promise<MemorySnapshot>;
+  rememberMemory: (
+    content: string,
+    projectId?: string,
+    kind?: MemoryKind
+  ) => Promise<MemoryEntry>;
+  updateMemory: (id: string, patch: UpdateMemoryInput) => Promise<MemoryEntry>;
+  deleteMemory: (id: string) => Promise<boolean>;
+  rebuildMemory: () => Promise<MemorySnapshot>;
   workspaceDir: (projectId: string) => Promise<string>;
   listAssets: (projectId: string) => Promise<AssetRecord[]>;
   resolveAsset: (projectId: string, assetId: string) => Promise<{ asset: AssetRecord; absolutePath: string }>;

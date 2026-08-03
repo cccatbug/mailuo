@@ -72,5 +72,6 @@ export type AssistantEventPayload =
       output: string;
     }
   | { type: "context"; usage: AssistantContextUsage }
+  | { type: "aborted" }
   | { type: "done" }
   | { type: "error"; message: string };

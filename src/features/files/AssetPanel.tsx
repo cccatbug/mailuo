@@ -27,6 +27,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { isTextEditingTarget } from "@/lib/keyboard";
 import {
   Dialog,
   DialogContent,
@@ -262,6 +263,7 @@ export async function openAsset(projectId: string, asset: AssetRecord) {
 }
 
 export function AssetPanel() {
+  const rootRef = useRef<HTMLDivElement>(null);
   const projectId = useAppStore((state) => state.selectedProjectId);
   const [assets, setAssets] = useState<AssetRecord[]>([]);
   const [folders, setFolders] = useState<string[]>([""]);
@@ -404,6 +406,8 @@ export function AssetPanel() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (isTextEditingTarget(event.target)) return;
+      if (!rootRef.current?.contains(document.activeElement)) return;
       const mod = event.metaKey || event.ctrlKey;
       const key = event.key.toLocaleLowerCase();
       if (mod && key === "a") {
@@ -510,7 +514,16 @@ export function AssetPanel() {
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
-        <div className="asset-manager flex h-full min-w-0 overflow-hidden bg-background">
+        <div
+          ref={rootRef}
+          tabIndex={-1}
+          className="asset-manager flex h-full min-w-0 overflow-hidden bg-background outline-none"
+          onPointerDownCapture={(event) => {
+            if (!isTextEditingTarget(event.target)) {
+              rootRef.current?.focus({ preventScroll: true });
+            }
+          }}
+        >
           <aside className="asset-sidebar flex w-48 shrink-0 flex-col overflow-hidden border-r bg-sidebar/65">
             <div className="px-2 pt-2">
               {([

@@ -21,12 +21,23 @@ import type {
   AiModelRef,
   AiRequestContext,
 } from "../src/shared/ai-config";
+import type {
+  MemoryCandidate,
+  MemoryEntry,
+  MemoryTurn,
+} from "../src/shared/memory";
 import { AiConfigStore } from "./ai-config-store";
 import {
   AiRuntimeManager,
   type ResolvedAiRoute,
 } from "./ai-runtime";
 import { AgentTurnAccumulator } from "./agent-turn";
+import { ASSISTANT_TURN_RUNTIME } from "./assistant-turn-runtime";
+import {
+  extractExplicitMemoryCue,
+  MemoryEngine,
+  type MemoryExtractor,
+} from "./memory-engine";
 import { createBrowserTools } from "./browser-tools";
 import { BROWSER_CONTROL } from "./browser-runtime";
 import {
@@ -57,6 +68,21 @@ export function workspaceDir(projectId: string): string {
 export function memoryPath(): string {
   return path.join(MAILUO_HOME, "memory.md");
 }
+
+export function structuredMemoryPath(): string {
+  return path.join(MAILUO_HOME, "memory-v1.json");
+}
+
+const memoryExtractor: MemoryExtractor = {
+  extract: (turn) => extractTurnMemories(turn),
+  classify: (entries) => classifyLegacyMemories(entries),
+};
+
+export const MEMORY_ENGINE = new MemoryEngine({
+  filePath: structuredMemoryPath(),
+  legacyPath: memoryPath(),
+  extractor: memoryExtractor,
+});
 
 /** 限制文件访问在 ~/.mailuo 内 */
 function assertInHome(p: string): string {
@@ -136,18 +162,11 @@ export async function writeMailuoFile(p: string, content: string): Promise<void>
 }
 
 export async function appendMemory(note: string): Promise<void> {
-  const file = memoryPath();
-  await fs.mkdir(path.dirname(file), { recursive: true });
-  const stamp = new Date().toISOString().slice(0, 10);
-  await fs.appendFile(file, `- (${stamp}) ${note.trim()}\n`, "utf8");
-}
-
-async function readMemory(): Promise<string> {
-  try {
-    return await fs.readFile(memoryPath(), "utf8");
-  } catch {
-    return "";
-  }
+  await MEMORY_ENGINE.remember({
+    content: note,
+    scope: { type: "global" },
+    source: "explicit",
+  });
 }
 
 /* ---------- skills（~/.mailuo/ai/skills，SKILL.md 带 frontmatter） ---------- */
@@ -284,11 +303,117 @@ async function makeSession(
   return session;
 }
 
+const MEMORY_EXTRACTION_SYSTEM_PROMPT = `你是小枢的长期记忆提取器。只从用户本轮明确表达或可直接支持的证据中提取未来仍有帮助的信息，不记录临时请求、寒暄、密码、令牌或助手自己的说法。
+严格区分 fact（用户事实）、preference（稳定偏好）、project（仅当前项目有效的决定/约束）和 inference（有根据但未经用户确认的画像推断）。推断不得伪装成事实。相同主题必须使用稳定、简短的 key，便于新陈述替代旧陈述。没有值得记忆的信息时返回空数组。
+只输出 JSON：{"candidates":[{"key":"reply-style","kind":"preference","content":"用户偏好简洁直接的回答","scope":"global|project","confidence":0.9,"evidence":"用户原话的短摘录"}]}`;
+
+const MEMORY_CLASSIFICATION_SYSTEM_PROMPT = `你是小枢的旧记忆分类器。输入是用户此前明确保存的记忆。逐条分类为 fact、preference、project 或 inference；不得改写 key 和 content，不得遗漏。旧记忆没有可靠项目归属时使用 global。
+只输出 JSON：{"candidates":[{"key":"输入中的原 key","kind":"fact|preference|project|inference","content":"输入中的原 content","scope":"global","confidence":1,"evidence":"输入中的原 content"}]}`;
+
+function parseMemoryCandidates(text: string, projectId: string): MemoryCandidate[] {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1] ?? text;
+  const start = fenced.indexOf("{");
+  const end = fenced.lastIndexOf("}");
+  if (start < 0 || end <= start) throw new Error("记忆提取结果不是 JSON");
+  const parsed = JSON.parse(fenced.slice(start, end + 1)) as {
+    candidates?: unknown[];
+  };
+  const kinds = new Set(["fact", "preference", "project", "inference"]);
+  return (parsed.candidates ?? []).flatMap((value) => {
+    if (!value || typeof value !== "object") return [];
+    const item = value as Record<string, unknown>;
+    if (
+      typeof item.key !== "string" ||
+      typeof item.content !== "string" ||
+      typeof item.kind !== "string" ||
+      !kinds.has(item.kind)
+    ) {
+      return [];
+    }
+    const projectScoped = item.kind === "project" || item.scope === "project";
+    return [{
+      key: item.key.slice(0, 160),
+      kind: item.kind as MemoryCandidate["kind"],
+      content: item.content.slice(0, 600),
+      scope: projectScoped
+        ? { type: "project" as const, projectId }
+        : { type: "global" as const },
+      confidence:
+        typeof item.confidence === "number" ? item.confidence : 0.75,
+      evidence:
+        typeof item.evidence === "string" ? item.evidence.slice(0, 240) : "",
+    }];
+  });
+}
+
+async function extractTurnMemories(turn: MemoryTurn): Promise<{ candidates: MemoryCandidate[] }> {
+  const resolved = await AI_RUNTIME.resolve("assistant");
+  const session = await makeSession(resolved, MEMORY_EXTRACTION_SYSTEM_PROMPT);
+  const accumulator = new AgentTurnAccumulator();
+  const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
+    accumulator.handle(event);
+  });
+  try {
+    await session.prompt(
+      JSON.stringify({
+        projectId: turn.projectId,
+        userMessage: turn.userMessage.slice(0, 6_000),
+        assistantMessage: turn.assistantMessage.slice(0, 6_000),
+      })
+    );
+    return {
+      candidates: parseMemoryCandidates(accumulator.finish(), turn.projectId),
+    };
+  } finally {
+    unsubscribe();
+    session.dispose();
+  }
+}
+
+async function classifyLegacyMemories(
+  entries: MemoryEntry[]
+): Promise<{ candidates: MemoryCandidate[] }> {
+  const resolved = await AI_RUNTIME.resolve("assistant");
+  const session = await makeSession(resolved, MEMORY_CLASSIFICATION_SYSTEM_PROMPT);
+  const accumulator = new AgentTurnAccumulator();
+  const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
+    accumulator.handle(event);
+  });
+  try {
+    await session.prompt(
+      JSON.stringify(
+        entries.slice(0, 100).map((entry) => ({
+          key: entry.key,
+          content: entry.content,
+        }))
+      )
+    );
+    const candidates = parseMemoryCandidates(accumulator.finish(), "");
+    return {
+      candidates: candidates.flatMap((candidate) => {
+        const original = entries.find((entry) => entry.key === candidate.key);
+        if (!original) return [];
+        return [{
+          ...candidate,
+          key: original.key,
+          content: original.content,
+          scope: { type: "global" as const },
+          evidence: original.content.slice(0, 240),
+        }];
+      }),
+    };
+  } finally {
+    unsubscribe();
+    session.dispose();
+  }
+}
+
 async function buildPrompt(
   resolved: ResolvedAiRoute,
   baseSystemPrompt: string,
   userMessage: string,
-  requestContext?: AiRequestContext
+  requestContext?: AiRequestContext,
+  projectId = ""
 ): Promise<{ systemPrompt: string; message: string }> {
   const skillNames = requestContext?.skillNames ?? [];
   const skills =
@@ -296,7 +421,10 @@ async function buildPrompt(
       ? (await listSkills()).filter((skill) => skillNames.includes(skill.name))
       : [];
   const memory = resolved.contextProfile.sources.longTermMemory.enabled
-    ? await readMemory()
+    ? await MEMORY_ENGINE.context(
+        projectId,
+        resolved.contextProfile.sources.longTermMemory.maxChars
+      )
     : "";
   return assembleAiContext({
     profile: resolved.contextProfile,
@@ -542,12 +670,65 @@ function configKey(
 }
 
 export async function assistantSend(
+  requestId: string,
   message: string,
   projectId: string,
+  conversationId: string,
   attachments: AssistantAttachmentPayload[],
   requestContext: AiRequestContext | undefined,
   modelOverride: AiModelRef | null | undefined,
   emit: (event: AssistantEvent) => void
+): Promise<void> {
+  const lifecycle: {
+    aborted: boolean;
+    session: AgentSession | null;
+  } = { aborted: false, session: null };
+  const finishActiveTurn = ASSISTANT_TURN_RUNTIME.begin(requestId, async () => {
+    lifecycle.aborted = true;
+    ASSISTANT_CONTROL.cancelPending();
+    await lifecycle.session?.abort();
+  });
+  try {
+    const explicitMemory = extractExplicitMemoryCue(message);
+    if (explicitMemory) {
+      await MEMORY_ENGINE.remember({
+        content: explicitMemory,
+        scope: { type: "global" },
+        source: "explicit",
+        requestId,
+        conversationId,
+      }).catch(() => undefined);
+    }
+    if (lifecycle.aborted) {
+      emit({ type: "aborted" });
+      return;
+    }
+    await runAssistantTurn(
+      requestId,
+      message,
+      projectId,
+      conversationId,
+      attachments,
+      requestContext,
+      modelOverride,
+      emit,
+      lifecycle
+    );
+  } finally {
+    finishActiveTurn();
+  }
+}
+
+async function runAssistantTurn(
+  requestId: string,
+  message: string,
+  projectId: string,
+  conversationId: string,
+  attachments: AssistantAttachmentPayload[],
+  requestContext: AiRequestContext | undefined,
+  modelOverride: AiModelRef | null | undefined,
+  emit: (event: AssistantEvent) => void,
+  lifecycle: { aborted: boolean; session: AgentSession | null }
 ): Promise<void> {
   const cwd = workspaceDir(projectId || "default");
   const resolved = await AI_RUNTIME.resolve("assistant", modelOverride);
@@ -555,7 +736,8 @@ export async function assistantSend(
     resolved,
     ASSISTANT_SYSTEM_PROMPT,
     message,
-    requestContext
+    requestContext,
+    projectId
   );
   const key = configKey(resolved, assembled.systemPrompt, cwd);
   if (assistant && assistant.key !== key) {
@@ -572,6 +754,12 @@ export async function assistantSend(
     };
   }
   const { session } = assistant;
+  lifecycle.session = session;
+  if (lifecycle.aborted) {
+    await session.abort();
+    emit({ type: "aborted" });
+    return;
+  }
   const prepared = await prepareAttachments(
     cwd,
     assembled.message,
@@ -586,6 +774,11 @@ export async function assistantSend(
     !session.model?.input.includes("image")
   ) {
     throw new Error("当前模型不支持图片输入，请切换到支持视觉的模型");
+  }
+  if (lifecycle.aborted) {
+    await session.abort();
+    emit({ type: "aborted" });
+    return;
   }
   ASSISTANT_CONTROL.beginTurn(emit);
 
@@ -647,7 +840,12 @@ export async function assistantSend(
       requestContext?.browserTabs?.map((tab) => tab.tabId) ?? []
     );
     await session.prompt(prepared.message, { images: prepared.images });
-    if (!turn.finish()) throw new Error("模型返回了空回复");
+    if (lifecycle.aborted) {
+      emit({ type: "aborted" });
+      return;
+    }
+    const finalText = turn.finish();
+    if (!finalText) throw new Error("模型返回了空回复");
     const usage = session.getContextUsage();
     if (usage) {
       emit({
@@ -660,7 +858,25 @@ export async function assistantSend(
       });
     }
     emit({ type: "done" });
+    void MEMORY_ENGINE.learnTurn({
+      requestId,
+      conversationId,
+      projectId,
+      userMessage: message,
+      assistantMessage: finalText,
+    });
   } catch (err) {
+    if (lifecycle.aborted) {
+      emit({ type: "aborted" });
+      void MEMORY_ENGINE.learnTurn({
+        requestId,
+        conversationId,
+        projectId,
+        userMessage: message,
+        assistantMessage: "",
+      });
+      return;
+    }
     assistantReset();
     const msg = err instanceof Error ? err.message : String(err);
     emit({ type: "error", message: msg });
@@ -672,7 +888,12 @@ export async function assistantSend(
   }
 }
 
+export async function assistantAbort(requestId: string): Promise<boolean> {
+  return ASSISTANT_TURN_RUNTIME.abort(requestId);
+}
+
 export function assistantReset(): void {
+  void ASSISTANT_TURN_RUNTIME.abortActive().catch(() => undefined);
   ASSISTANT_CONTROL.cancelPending();
   assistant?.session.dispose();
   assistant = null;

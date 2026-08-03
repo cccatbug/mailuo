@@ -521,7 +521,7 @@ export function applyAssistantOps(
       case "remember": {
         if (op.notes?.trim()) {
           void import("@/lib/bridge").then(({ bridge }) =>
-            bridge?.memoryAppend(op.notes!.trim())
+            bridge?.rememberMemory(op.notes!.trim())
           );
           done++;
         } else skipped++;

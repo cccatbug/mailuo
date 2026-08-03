@@ -507,7 +507,7 @@
     }
   body {
     @apply bg-background text-foreground;
-    user-select: none;
+    user-select: text;
     }
   html {
     @apply font-sans;
@@ -520,6 +520,9 @@
     }
   input, textarea, [contenteditable] {
     user-select: text;
+    }
+  button, [role="button"], [role="menuitem"], .app-drag {
+    user-select: none;
     }
 }
 

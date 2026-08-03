@@ -33,7 +33,11 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { assistantReset, assistantSend } from "@/lib/ai";
+import {
+  assistantReset,
+  startAssistantTurn,
+  type AssistantTurnHandle,
+} from "@/lib/ai";
 import {
   bridge,
   type AssistantAttachmentMeta,
@@ -92,6 +96,7 @@ export interface Message {
   content: string; // user 原文；assistant 为完整原始文本（含协议块）
   parts?: MsgPart[];
   streaming?: boolean;
+  interrupted?: boolean;
   ops?: AssistantOp[];
   opsApplied?: boolean;
   charts?: ChartSpec[];
@@ -146,6 +151,14 @@ export const useChat = create<ChatStore>((set) => ({
   stale: false,
   set,
 }));
+
+let activeAssistantTurn: AssistantTurnHandle | null = null;
+
+export async function stopAssistantTurn(): Promise<void> {
+  const turn = activeAssistantTurn;
+  if (!turn) return;
+  await turn.abort();
+}
 
 function persistChats() {
   const { conversations } = useChat.getState();
@@ -206,6 +219,7 @@ export function resetShuConversation() {
       stale: false,
     });
   void assistantReset();
+  void bridge?.rebuildMemory();
   toast("已开启新对话");
 }
 
@@ -215,6 +229,7 @@ export function switchConversation(id: string) {
     .getState()
     .set({ currentId: id, contextUsage: undefined, approvals: [], stale: true });
   void assistantReset();
+  void bridge?.rebuildMemory();
 }
 
 export function deleteConversation(id: string) {
@@ -227,16 +242,14 @@ export function deleteConversation(id: string) {
   persistChats();
 }
 
-/** 打开长期记忆文件（不存在则先建） */
+/** 打开可审查、可纠正的结构化长期记忆。 */
 export async function openMemoryFile() {
-  const p = await bridge?.memoryPath();
-  if (!p) return;
-  try {
-    await bridge!.readFile(p);
-  } catch {
-    await bridge!.writeFile(p, "# 小枢的长期记忆\n\n");
-  }
-  openFilePanel(p);
+  useAppStore.getState().setSettingsOpen(true);
+  queueMicrotask(() => {
+    window.dispatchEvent(
+      new CustomEvent("mailuo-open-settings-pane", { detail: "memory" })
+    );
+  });
 }
 
 /* ---------- 发送 ---------- */
@@ -378,6 +391,7 @@ async function sendMessage(
     mentionContext: `${mentionContext}${assetContext}`,
     browserTabs,
     projectId,
+    conversationId: conv.id,
     skillNames,
     staleContext,
     modelOverride,
@@ -390,6 +404,7 @@ async function completeAssistantTurn({
   attachmentPayloads,
   mentionContext,
   projectId,
+  conversationId,
   skillNames,
   staleContext,
   modelOverride,
@@ -399,6 +414,7 @@ async function completeAssistantTurn({
   attachmentPayloads: ReturnType<typeof attachmentPayload>[];
   mentionContext: string;
   projectId: string;
+  conversationId: string;
   skillNames: string[];
   staleContext: string;
   modelOverride?: AiModelRef;
@@ -406,6 +422,7 @@ async function completeAssistantTurn({
 }): Promise<void> {
   let fullText = "";
   let segText = "";
+  let interrupted = false;
 
   const patchLast = (fn: (m: Message) => Message) => {
     updateCurrent((c) => {
@@ -505,13 +522,17 @@ async function completeAssistantTurn({
       }));
     } else if (e.type === "context") {
       useChat.getState().set({ contextUsage: e.usage });
+    } else if (e.type === "aborted") {
+      interrupted = true;
     }
   };
 
+  let turn: AssistantTurnHandle | null = null;
   try {
-    await assistantSend(
+    turn = startAssistantTurn(
       agentText,
       projectId,
+      conversationId,
       attachmentPayloads,
       {
         projectSnapshot: projectContext(projectId),
@@ -523,9 +544,21 @@ async function completeAssistantTurn({
       modelOverride,
       onEvent
     );
+    activeAssistantTurn = turn;
+    await turn.completion;
     // 回合结束：解析协议块（在完整文本上），清理各文本段
     patchLast((m) => {
-      const { content, ops, charts, uiSpecs } = parseAssistantReply(fullText);
+      const parsed = interrupted
+        ? {
+            content: fullText
+              .replace(/```mailuo-[\s\S]*?(```|$)/g, "")
+              .trim(),
+            ops: [],
+            charts: [],
+            uiSpecs: [],
+          }
+        : parseAssistantReply(fullText);
+      const { content, ops, charts, uiSpecs } = parsed;
       let parts = (m.parts ?? [])
         .map((p) =>
           p.kind === "text"
@@ -552,8 +585,19 @@ async function completeAssistantTurn({
         return p;
       });
       if (!replaced && content) parts.push({ kind: "text", text: content });
-      if (parts.length === 0) parts.push({ kind: "text", text: "（收到）" });
-      return { ...m, content: fullText, parts, streaming: false, ops, charts, uiSpecs };
+      if (parts.length === 0 && !interrupted) {
+        parts.push({ kind: "text", text: "（收到）" });
+      }
+      return {
+        ...m,
+        content: fullText,
+        parts,
+        streaming: false,
+        interrupted,
+        ops,
+        charts,
+        uiSpecs,
+      };
     });
     persistChats();
   } catch (err) {
@@ -570,6 +614,7 @@ async function completeAssistantTurn({
     }));
     persistChats();
   } finally {
+    if (activeAssistantTurn === turn) activeAssistantTurn = null;
     useChat.getState().set({ busy: false, approvals: [] });
   }
 }
@@ -1021,6 +1066,11 @@ export function AssistantPanel() {
                         <ToolPart key={j} part={p} />
                       )
                     )}
+                    {m.interrupted && (
+                      <span className="text-xs text-muted-foreground">
+                        已中断
+                      </span>
+                    )}
                     {m.streaming && (m.parts?.length ?? 0) === 0 && (
                       <div className="rounded-xl border bg-card px-3.5 py-2 text-sm text-muted-foreground">
                         小枢思考中…
@@ -1231,7 +1281,8 @@ export function AssistantPanel() {
 
       <Composer
         tasks={projectTasks}
-        busy={busy || assistantStatus?.ready === false}
+        busy={busy}
+        disabled={assistantStatus?.ready === false}
         contextUsage={contextUsage}
         modelOverride={conv?.modelOverride}
         onModelOverrideChange={(modelOverride) => {
@@ -1250,6 +1301,10 @@ export function AssistantPanel() {
         onSend={(text, ids, skills, attachments, assetRefs) =>
           sendMessage(text, ids, skills, attachments, assetRefs)
         }
+        onStop={() => {
+          setBrowserApprovals([]);
+          void stopAssistantTurn();
+        }}
       />
     </div>
   );

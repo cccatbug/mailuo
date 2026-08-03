@@ -14,6 +14,7 @@ import {
   FileText,
   Paperclip,
   Send,
+  Square,
   Settings2,
   SlashSquare,
   Upload,
@@ -148,13 +149,16 @@ function ContextUsageRing({ usage }: { usage?: AssistantContextUsage }) {
 export function Composer({
   tasks,
   busy,
+  disabled = false,
   contextUsage,
   modelOverride,
   onModelOverrideChange,
   onSend,
+  onStop,
 }: {
   tasks: Task[];
   busy: boolean;
+  disabled?: boolean;
   contextUsage?: AssistantContextUsage;
   modelOverride?: AiModelRef;
   onModelOverrideChange: (model: AiModelRef | null) => void;
@@ -165,6 +169,7 @@ export function Composer({
     attachments: ComposerAttachment[],
     assetRefs: AssetRecord[]
   ) => Promise<boolean>;
+  onStop: () => void;
 }) {
   const { t } = useTranslation();
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
@@ -388,7 +393,7 @@ export function Composer({
   };
 
   const send = async () => {
-    if (busy || submittingRef.current) return;
+    if (busy || disabled || submittingRef.current) return;
     submittingRef.current = true;
     setSubmitting(true);
     const queuedBeforeSend = attachmentQueueRef.current;
@@ -890,18 +895,21 @@ export function Composer({
           <ContextUsageRing usage={contextUsage} />
           <Button
             size="icon-sm"
-            aria-label="发送"
+            aria-label={busy ? "停止生成" : "发送"}
             className="size-7 rounded-lg"
             disabled={
-              busy ||
-              submitting ||
-              (!input.trim() &&
-                attachments.length === 0 &&
-                !preparingAttachments)
+              !busy &&
+              (disabled ||
+                submitting ||
+                (!input.trim() &&
+                  attachments.length === 0 &&
+                  !preparingAttachments))
             }
-            onClick={() => void send()}
+            onClick={() => (busy ? onStop() : void send())}
           >
-            {busy || submitting ? (
+            {busy ? (
+              <Square className="size-3.5 fill-current" />
+            ) : submitting ? (
               <Spinner className="size-3.5" />
             ) : (
               <Send className="size-3.5" />

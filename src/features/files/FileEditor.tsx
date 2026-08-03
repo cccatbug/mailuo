@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import {
   Eye,
   FileQuestion,
@@ -14,8 +14,15 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { bridge } from "@/lib/bridge";
 import { Md } from "@/features/ai/Markdown";
-import { cn } from "@/lib/utils";
+import { useAppStore } from "@/store/useAppStore";
 import { ImageViewer } from "./ImageViewer";
+import { fileEditorLanguage } from "./editor-language";
+
+const MonacoFileEditor = lazy(() =>
+  import("./MonacoFileEditor").then((module) => ({
+    default: module.MonacoFileEditor,
+  }))
+);
 
 /** ~/.mailuo 内文件的查看/编辑器（小枢产出物、附件、记忆文件等） */
 export function FileEditor({
@@ -25,6 +32,7 @@ export function FileEditor({
   path: string;
   mimeType?: string;
 }) {
+  const theme = useAppStore((state) => state.theme);
   const [content, setContent] = useState<string | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -70,6 +78,7 @@ export function FileEditor({
     normalizedMime.startsWith("text/") ||
     ["json", "xml", "yaml", "yml", "js", "jsx", "ts", "tsx", "css", "csv", "log"].includes(extension);
   const isUnknown = !isImage && !isMedia && !isText;
+  const editorLanguage = fileEditorLanguage(path);
 
   useEffect(() => {
     let cancelled = false;
@@ -244,26 +253,27 @@ export function FileEditor({
           </Button>
         </div>
       ) : (
-        <textarea
-          value={content ?? ""}
-          spellCheck={false}
-          className={cn(
-            "min-h-0 flex-1 resize-none bg-transparent px-5 py-4 text-sm leading-relaxed outline-none",
-            !isMd && "font-mono text-xs"
-          )}
-          onChange={(e) => {
-            contentRef.current = e.target.value;
-            dirtyRef.current = true;
-            setContent(e.target.value);
-            setDirty(true);
-          }}
-          onKeyDown={(e) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-              e.preventDefault();
-              void save();
-            }
-          }}
-        />
+        <Suspense
+          fallback={
+            <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
+              <Spinner />
+            </div>
+          }
+        >
+          <MonacoFileEditor
+            path={path}
+            value={content ?? ""}
+            language={editorLanguage}
+            theme={theme}
+            onChange={(value) => {
+              contentRef.current = value;
+              dirtyRef.current = true;
+              setContent(value);
+              setDirty(true);
+            }}
+            onSave={() => void save()}
+          />
+        </Suspense>
       )}
     </div>
   );

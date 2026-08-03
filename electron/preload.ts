@@ -33,6 +33,12 @@ import type {
   BrowserTabRegistration,
   BrowserTabUpdate,
 } from "../src/shared/browser";
+import type {
+  MemoryEntry,
+  MemoryKind,
+  MemorySnapshot,
+  UpdateMemoryInput,
+} from "../src/shared/memory";
 
 const api = {
   platform: process.platform as NodeJS.Platform,
@@ -61,6 +67,7 @@ const api = {
     requestId: string,
     message: string,
     projectId: string,
+    conversationId: string,
     attachments: AssistantAttachmentPayload[],
     context?: AiRequestContext,
     modelOverride?: AiModelRef | null
@@ -70,10 +77,14 @@ const api = {
       requestId,
       message,
       projectId,
+      conversationId,
       attachments,
       context,
       modelOverride
     ),
+
+  assistantAbort: (requestId: string): Promise<boolean> =>
+    ipcRenderer.invoke("assistant:abort", requestId),
 
   setAssistantPermissionMode: (mode: AssistantPermissionMode): Promise<void> =>
     ipcRenderer.invoke("assistant:permission-mode", mode),
@@ -139,6 +150,21 @@ const api = {
   memoryPath: (): Promise<string> => ipcRenderer.invoke("mailuo:memory-path"),
   memoryAppend: (note: string): Promise<void> =>
     ipcRenderer.invoke("mailuo:memory-append", note),
+  getMemory: (): Promise<MemorySnapshot> => ipcRenderer.invoke("memory:snapshot"),
+  setMemoryEnabled: (enabled: boolean): Promise<MemorySnapshot> =>
+    ipcRenderer.invoke("memory:set-enabled", enabled),
+  rememberMemory: (
+    content: string,
+    projectId?: string,
+    kind?: MemoryKind
+  ): Promise<MemoryEntry> =>
+    ipcRenderer.invoke("memory:remember", content, projectId, kind),
+  updateMemory: (id: string, patch: UpdateMemoryInput): Promise<MemoryEntry> =>
+    ipcRenderer.invoke("memory:update", id, patch),
+  deleteMemory: (id: string): Promise<boolean> =>
+    ipcRenderer.invoke("memory:delete", id),
+  rebuildMemory: (): Promise<MemorySnapshot> =>
+    ipcRenderer.invoke("memory:rebuild"),
   workspaceDir: (projectId: string): Promise<string> =>
     ipcRenderer.invoke("mailuo:workspace-dir", projectId),
   listAssets: (projectId: string): Promise<AssetRecord[]> =>
