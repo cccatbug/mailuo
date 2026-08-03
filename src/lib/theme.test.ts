@@ -19,8 +19,16 @@ describe("theme preferences", () => {
     expect(resolveThemeMode("light", true)).toBe("light");
   });
 
-  it("exposes all four supported global palettes", () => {
+  it("restores the pure white palette from persisted preferences", () => {
+    expect(migrateThemePreference(null, "dark", "white")).toEqual({
+      mode: "light",
+      palette: "white",
+    });
+  });
+
+  it("exposes all five supported global palettes", () => {
     expect(THEME_PALETTES).toEqual([
+      "white",
       "paper",
       "moon",
       "celadon",

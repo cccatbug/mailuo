@@ -97,6 +97,7 @@ function AppearancePane() {
   const settings = useAppStore((s) => s.settings);
   const setSettings = useAppStore((s) => s.setSettings);
   const palettes: ThemePalette[] = [
+    "white",
     "paper",
     "moon",
     "celadon",

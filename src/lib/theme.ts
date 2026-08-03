@@ -1,8 +1,9 @@
 export type Theme = "light" | "dark";
 export type ThemeMode = Theme | "system";
-export type ThemePalette = "paper" | "moon" | "celadon" | "graphite";
+export type ThemePalette = "white" | "paper" | "moon" | "celadon" | "graphite";
 
 export const THEME_PALETTES: ThemePalette[] = [
+  "white",
   "paper",
   "moon",
   "celadon",
@@ -34,5 +35,5 @@ export function migrateThemePreference(
   const palette = THEME_PALETTES.includes(storedPalette as ThemePalette)
     ? (storedPalette as ThemePalette)
     : "paper";
-  return { mode, palette };
+  return { mode: palette === "white" ? "light" : mode, palette };
 }

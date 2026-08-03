@@ -144,6 +144,48 @@
     --graph-node-24: color-mix(in oklch, oklch(0.54 0.08 350) 80%, var(--primary));
 }
 
+/* 纯白：无色偏的全浅色表面 */
+:root[data-theme-palette="white"] {
+    --background: oklch(1 0 0);
+    --foreground: oklch(0.22 0 0);
+    --card: oklch(1 0 0);
+    --card-foreground: var(--foreground);
+    --popover: oklch(1 0 0);
+    --popover-foreground: var(--foreground);
+    --primary: oklch(0.46 0.12 255);
+    --primary-foreground: oklch(1 0 0);
+    --secondary: oklch(0.97 0 0);
+    --secondary-foreground: oklch(0.27 0 0);
+    --muted: oklch(0.965 0 0);
+    --muted-foreground: oklch(0.5 0 0);
+    --accent: oklch(0.95 0.008 255);
+    --accent-foreground: var(--foreground);
+    --destructive: oklch(0.55 0.18 25);
+    --border: oklch(0.9 0 0);
+    --input: oklch(0.88 0 0);
+    --ring: oklch(0.46 0.12 255 / 50%);
+    --chart-1: oklch(0.5 0.13 255);
+    --chart-2: oklch(0.55 0.11 165);
+    --chart-3: oklch(0.58 0.14 35);
+    --chart-4: oklch(0.62 0.13 85);
+    --chart-5: oklch(0.53 0.12 310);
+    --sidebar: oklch(0.985 0 0);
+    --sidebar-foreground: var(--foreground);
+    --sidebar-primary: var(--primary);
+    --sidebar-primary-foreground: var(--primary-foreground);
+    --sidebar-accent: oklch(0.94 0.008 255);
+    --sidebar-accent-foreground: var(--foreground);
+    --sidebar-border: var(--border);
+    --sidebar-ring: var(--ring);
+    --status-done: oklch(0.52 0.11 155);
+    --status-doing: oklch(0.62 0.13 85);
+    --status-todo: oklch(0.56 0 0);
+    --viz-done: oklch(0.48 0.13 155);
+    --viz-doing: oklch(0.58 0.14 80);
+    --viz-ready: oklch(0.48 0.14 255);
+    --viz-blocked: oklch(0.54 0.17 25);
+}
+
 /* 月白靛蓝 */
 :root[data-theme-palette="moon"] {
     --background: oklch(0.965 0.012 255);
@@ -396,6 +438,9 @@
 [data-palette-preview="paper"] .theme-palette-swatch {
   background: linear-gradient(135deg, oklch(0.955 0.016 95) 50%, oklch(0.545 0.135 28) 50%);
 }
+[data-palette-preview="white"] .theme-palette-swatch {
+  background: linear-gradient(135deg, oklch(1 0 0) 50%, oklch(0.46 0.12 255) 50%);
+}
 [data-palette-preview="moon"] .theme-palette-swatch {
   background: linear-gradient(135deg, oklch(0.965 0.012 255) 50%, oklch(0.52 0.145 266) 50%);
 }
@@ -601,9 +646,7 @@
 .task-node-card {
   border-color: color-mix(in oklch, var(--graph-node-accent) 42%, var(--border));
   background: color-mix(in oklch, var(--graph-node-accent) 9%, var(--card));
-  box-shadow:
-    inset 3px 0 0 color-mix(in oklch, var(--graph-node-accent) 82%, transparent),
-    0 1px 2px oklch(0 0 0 / 6%);
+  box-shadow: 0 1px 2px oklch(0 0 0 / 6%);
 }
 .task-node-card:hover {
   background: color-mix(in oklch, var(--graph-node-accent) 13%, var(--card));
@@ -611,9 +654,7 @@
 .task-node-card.task-node-done {
   border-color: color-mix(in oklch, var(--graph-node-accent) 28%, var(--border));
   background: color-mix(in oklch, var(--graph-node-accent) 5%, var(--card));
-  box-shadow:
-    inset 3px 0 0 color-mix(in oklch, var(--graph-node-accent) 48%, transparent),
-    0 1px 2px oklch(0 0 0 / 5%);
+  box-shadow: 0 1px 2px oklch(0 0 0 / 5%);
 }
 .task-node-card.task-node-selected {
   border-color: var(--primary);

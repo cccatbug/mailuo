@@ -277,12 +277,14 @@ export const useAppStore = create<AppStore>((set, get) => {
 
     setView: (view) => set({ view }),
     setTheme: (theme) => {
+      if (get().themePalette === "white") theme = "light";
       localStorage.setItem(THEME_MODE_KEY, theme);
       localStorage.setItem(THEME_KEY, theme);
       applyTheme(theme, get().themePalette);
       set({ theme, themeMode: theme });
     },
     setThemeMode: (themeMode) => {
+      if (get().themePalette === "white") themeMode = "light";
       localStorage.setItem(THEME_MODE_KEY, themeMode);
       const theme = resolveThemeMode(
         themeMode,
@@ -293,6 +295,13 @@ export const useAppStore = create<AppStore>((set, get) => {
     },
     setThemePalette: (themePalette) => {
       localStorage.setItem(THEME_PALETTE_KEY, themePalette);
+      if (themePalette === "white") {
+        localStorage.setItem(THEME_MODE_KEY, "light");
+        localStorage.setItem(THEME_KEY, "light");
+        applyTheme("light", themePalette);
+        set({ theme: "light", themeMode: "light", themePalette });
+        return;
+      }
       applyTheme(get().theme, themePalette);
       set({ themePalette });
     },
