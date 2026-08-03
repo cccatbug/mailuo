@@ -23,6 +23,7 @@ export type { Theme, ThemeMode, ThemePalette } from "@/lib/theme";
 export type Locale = "zh-CN" | "en";
 export type GraphDirection = "LR" | "TB";
 export type StatusFilter = "all" | "todo" | "doing" | "done" | "blocked";
+export type NodePosition = { x: number; y: number };
 
 export interface AppSettings {
   /** 界面缩放（1 = 100%） */
@@ -77,6 +78,12 @@ interface AppStore {
   themeMode: ThemeMode;
   themePalette: ThemePalette;
   graphDirection: GraphDirection;
+  /** 脉络图中被用户手动拖拽过的节点位置（taskId -> 位置），未记录的任务用 dagre 布局 */
+  graphNodePositions: Record<string, NodePosition>;
+  /** 脉络图状态过滤 */
+  graphFilter: StatusFilter;
+  /** 脉络图聚焦的任务 id（只看其依赖链路） */
+  graphFocusTaskId: string | null;
   search: string;
   statusFilter: StatusFilter;
   commandOpen: boolean;
@@ -95,6 +102,9 @@ interface AppStore {
   setThemeMode: (mode: ThemeMode) => void;
   setThemePalette: (palette: ThemePalette) => void;
   setGraphDirection: (d: GraphDirection) => void;
+  setGraphNodePositions: (positions: Record<string, NodePosition>) => void;
+  setGraphFilter: (f: StatusFilter) => void;
+  setGraphFocus: (id: string | null) => void;
   setSearch: (q: string) => void;
   setStatusFilter: (f: StatusFilter) => void;
   setCommandOpen: (open: boolean) => void;
@@ -144,6 +154,16 @@ const THEME_MODE_KEY = "mailuo-theme-mode";
 const THEME_PALETTE_KEY = "mailuo-theme-palette";
 const SETTINGS_KEY = "mailuo-settings";
 const PANELS_KEY = "mailuo-panels";
+const GRAPH_POSITIONS_KEY = "mailuo-graph-positions";
+
+function loadGraphPositions(): Record<string, NodePosition> {
+  try {
+    const raw = localStorage.getItem(GRAPH_POSITIONS_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, NodePosition>) : {};
+  } catch {
+    return {};
+  }
+}
 
 function loadPanels(): { left: boolean; right: boolean } {
   try {
@@ -217,6 +237,9 @@ export const useAppStore = create<AppStore>((set, get) => {
     themeMode: "system",
     themePalette: "paper",
     graphDirection: "LR",
+    graphNodePositions: loadGraphPositions(),
+    graphFilter: "all",
+    graphFocusTaskId: null,
     search: "",
     statusFilter: "all",
     commandOpen: false,
@@ -305,7 +328,19 @@ export const useAppStore = create<AppStore>((set, get) => {
       applyTheme(get().theme, themePalette);
       set({ themePalette });
     },
-    setGraphDirection: (graphDirection) => set({ graphDirection }),
+    setGraphDirection: (graphDirection) => {
+      if (get().graphDirection === graphDirection) return;
+      // 手动位置是方向相关的，切换方向后整体重排
+      localStorage.setItem(GRAPH_POSITIONS_KEY, "{}");
+      set({ graphDirection, graphNodePositions: {} });
+    },
+    setGraphNodePositions: (positions) => {
+      const next = { ...get().graphNodePositions, ...positions };
+      localStorage.setItem(GRAPH_POSITIONS_KEY, JSON.stringify(next));
+      set({ graphNodePositions: next });
+    },
+    setGraphFilter: (graphFilter) => set({ graphFilter }),
+    setGraphFocus: (graphFocusTaskId) => set({ graphFocusTaskId }),
     setSearch: (search) => set({ search }),
     setStatusFilter: (statusFilter) => set({ statusFilter }),
     setCommandOpen: (commandOpen) => set({ commandOpen }),
@@ -328,6 +363,7 @@ export const useAppStore = create<AppStore>((set, get) => {
         tasks,
         selectedProjectId: projects[0]?.id ?? null,
         selectedTaskId: null,
+        graphFocusTaskId: null,
       });
     },
     togglePanel: (side) => {
@@ -344,7 +380,12 @@ export const useAppStore = create<AppStore>((set, get) => {
       else set({ panelRight: open });
     },
     selectProject: (id) =>
-      set({ selectedProjectId: id, selectedTaskId: null, search: "" }),
+      set({
+        selectedProjectId: id,
+        selectedTaskId: null,
+        graphFocusTaskId: null,
+        search: "",
+      }),
     // 选中任务时自动展开右栏（Obsidian 式：面板按需出现）
     selectTask: (id) =>
       set((s) => ({
@@ -470,6 +511,7 @@ export const useAppStore = create<AppStore>((set, get) => {
         selectedProjectId:
           selectedProjectId === id ? (rest[0]?.id ?? null) : selectedProjectId,
         selectedTaskId: null,
+        graphFocusTaskId: null,
       });
     },
 
@@ -502,13 +544,14 @@ export const useAppStore = create<AppStore>((set, get) => {
     },
 
     deleteTask: (id) => {
-      const { tasks, selectedTaskId } = get();
+      const { tasks, selectedTaskId, graphFocusTaskId, graphNodePositions } =
+        get();
       const task = tasks.find((t) => t.id === id);
       if (!task) return null;
       const referencedBy = tasks
         .filter((t) => t.deps.includes(id))
         .map((t) => t.id);
-      commit({
+      const patch: Partial<AppStore> = {
         tasks: tasks
           .filter((t) => t.id !== id)
           .map((t) =>
@@ -517,7 +560,14 @@ export const useAppStore = create<AppStore>((set, get) => {
               : t
           ),
         selectedTaskId: selectedTaskId === id ? null : selectedTaskId,
-      });
+      };
+      if (graphFocusTaskId === id) patch.graphFocusTaskId = null;
+      if (id in graphNodePositions) {
+        const positions = { ...graphNodePositions };
+        delete positions[id];
+        patch.graphNodePositions = positions;
+      }
+      commit(patch);
       return { task, referencedBy };
     },
 

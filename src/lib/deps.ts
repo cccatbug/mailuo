@@ -14,6 +14,39 @@ export function dependentsOf(taskId: string, tasks: Task[]): Task[] {
   return tasks.filter((t) => t.deps.includes(taskId));
 }
 
+/** 任务自身及其全部祖先、后继（沿 deps 双向可达的完整链路） */
+export function dependencyChainOf(
+  taskId: string,
+  byId: Map<string, Task>
+): Set<string> {
+  const chain = new Set<string>([taskId]);
+  const dependents = new Map<string, string[]>();
+  for (const t of byId.values()) {
+    for (const d of t.deps) {
+      const list = dependents.get(d) ?? [];
+      list.push(t.id);
+      dependents.set(d, list);
+    }
+  }
+  const stack = [taskId];
+  while (stack.length > 0) {
+    const cur = stack.pop()!;
+    for (const next of byId.get(cur)?.deps ?? []) {
+      if (!chain.has(next)) {
+        chain.add(next);
+        stack.push(next);
+      }
+    }
+    for (const next of dependents.get(cur) ?? []) {
+      if (!chain.has(next)) {
+        chain.add(next);
+        stack.push(next);
+      }
+    }
+  }
+  return chain;
+}
+
 /**
  * 若让 taskId 依赖 depId，是否会形成环：
  * 即 depId 沿它的前置链能否到达 taskId。

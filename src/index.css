@@ -662,6 +662,17 @@
 .task-node-card.task-node-selected {
   border-color: var(--primary);
 }
+/* 选中某任务时，链路之外的节点/连线变淡 */
+.task-node-card.task-node-dimmed {
+  opacity: 0.3;
+}
+.react-flow__edge.dimmed-edge {
+  opacity: 0.12;
+}
+.react-flow__edge.chain-edge .react-flow__edge-path {
+  stroke: var(--primary);
+  stroke-width: 2;
+}
 .react-flow__controls {
   box-shadow: none;
   border: 1px solid var(--border);
