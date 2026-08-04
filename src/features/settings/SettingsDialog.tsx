@@ -54,6 +54,7 @@ import { AiSettingsPane } from "./AiSettingsPane";
 import { BrowserSettingsPane } from "./BrowserSettingsPane";
 import { AssistantSettingsPane } from "./AssistantSettingsPane";
 import { MemorySettingsPane } from "./MemorySettingsPane";
+import { SystemFontPicker } from "./SystemFontPicker";
 import packageInfo from "../../../package.json";
 
 /* ---------- Obsidian 式设置行：左侧名称+描述，右侧控件 ---------- */
@@ -203,41 +204,15 @@ function AppearancePane() {
 
       <SectionHeading>字体</SectionHeading>
       <SettingRow
-        title="正文字体"
-        description="界面正文使用的字体族，均为系统内置字库。"
+        title="应用字体"
+        description="从电脑已安装的字体中选择，并应用到界面正文、标题、输入框和备注。首次展开时会读取系统字体。"
       >
-        <Select
-          value={settings.fontBody}
-          onValueChange={(v) => setSettings({ fontBody: v as "sans" | "serif" })}
-        >
-          <SelectTrigger size="sm" className="w-32">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectGroup>
-              <SelectItem value="sans">黑体（默认）</SelectItem>
-              <SelectItem value="serif">宋体衬线</SelectItem>
-            </SelectGroup>
-          </SelectContent>
-        </Select>
-      </SettingRow>
-      <SettingRow title="标题字体" description="标题与强调文本使用的字体族。">
-        <Select
-          value={settings.fontHeading}
-          onValueChange={(v) =>
-            setSettings({ fontHeading: v as "serif" | "sans" })
-          }
-        >
-          <SelectTrigger size="sm" className="w-32">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectGroup>
-              <SelectItem value="serif">宋体衬线（默认）</SelectItem>
-              <SelectItem value="sans">黑体</SelectItem>
-            </SelectGroup>
-          </SelectContent>
-        </Select>
+        <div className="w-96">
+          <SystemFontPicker
+            value={settings.appFontFamily}
+            onValueChange={(appFontFamily) => setSettings({ appFontFamily })}
+          />
+        </div>
       </SettingRow>
     </div>
   );

@@ -136,4 +136,43 @@ describe("browser session compatibility", () => {
     expect(response?.action).toBe("deny");
     expect(send).toHaveBeenCalledWith("browser:open-tab", url);
   });
+
+  it("updates custom CSS in open pages and reapplies it after navigation", async () => {
+    const listeners = new Map<string, () => void>();
+    let key = 0;
+    const insertCSS = vi.fn(async () => `css-${++key}`);
+    const removeInsertedCSS = vi.fn(async () => undefined);
+    const contents = {
+      id: 44,
+      setBackgroundThrottling: vi.fn(),
+      setWindowOpenHandler: vi.fn(),
+      on: vi.fn((event: string, listener: () => void) =>
+        listeners.set(event, listener)
+      ),
+      off: vi.fn(),
+      once: vi.fn(),
+      isDestroyed: vi.fn(() => false),
+      insertCSS,
+      removeInsertedCSS,
+      navigationHistory: {
+        canGoBack: vi.fn(() => false),
+        goBack: vi.fn(),
+      },
+    };
+    const manager = new BrowserSessionManager();
+    manager.configureContents(contents as never);
+
+    await manager.setCustomCss("body { font-family: serif !important; }");
+    expect(insertCSS).toHaveBeenLastCalledWith(
+      "body { font-family: serif !important; }",
+      { cssOrigin: "user" }
+    );
+
+    listeners.get("did-finish-load")?.();
+    await vi.waitFor(() => expect(insertCSS).toHaveBeenCalledTimes(2));
+    expect(removeInsertedCSS).toHaveBeenCalledWith("css-1");
+
+    await manager.setCustomCss("");
+    expect(removeInsertedCSS).toHaveBeenCalledWith("css-2");
+  });
 });

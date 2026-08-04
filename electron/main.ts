@@ -154,6 +154,17 @@ function createWindow() {
     },
   });
 
+  const appContents = win.webContents;
+  const appSession = appContents.session;
+  appSession.setPermissionCheckHandler((contents, permission) => {
+    if ((permission as string) !== "local-fonts") return true;
+    return contents?.id === appContents.id;
+  });
+  appSession.setPermissionRequestHandler((contents, permission, callback) => {
+    if ((permission as string) !== "local-fonts") return callback(true);
+    callback(contents.id === appContents.id);
+  });
+
   win.once("ready-to-show", () => win?.show());
   win.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
@@ -352,6 +363,9 @@ function registerIpc() {
   ipcMain.handle(
     "browser:clear-data",
     (_event, scope: "cookies" | "all" = "all") => BROWSER_SESSION.clear(scope)
+  );
+  ipcMain.handle("browser:custom-css:set", (_event, css: string) =>
+    BROWSER_SESSION.setCustomCss(css)
   );
   ipcMain.handle("browser:tabs:list", () =>
     BROWSER_RUNTIME.control.listTabs()

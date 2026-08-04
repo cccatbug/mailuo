@@ -137,7 +137,10 @@ function installClientHintsOverride(browserSession: Session, userAgent: string) 
 
 export class BrowserSessionManager {
   private browserSession: Session | null = null;
-  private readonly configuredContents = new Set<number>();
+  private readonly configuredContents = new Map<number, WebContents>();
+  private readonly insertedCssKeys = new Map<number, string>();
+  private customCss = "";
+  private customCssRevision = 0;
   private getParentWindow: (() => BrowserWindow | null) | null = null;
   private approveAgentDownload:
     | ((
@@ -283,8 +286,14 @@ export class BrowserSessionManager {
 
   configureContents(contents: WebContents, inherited = false) {
     if (this.configuredContents.has(contents.id)) return;
-    this.configuredContents.add(contents.id);
+    this.configuredContents.set(contents.id, contents);
     contents.setBackgroundThrottling(false);
+
+    const onDidFinishLoad = () => {
+      void this.applyCustomCss(contents);
+    };
+    contents.on("did-finish-load", onDidFinishLoad);
+    void this.applyCustomCss(contents);
 
     const onCreatedWindow = (child: BrowserWindow) => {
       this.configureContents(child.webContents, true);
@@ -394,8 +403,10 @@ export class BrowserSessionManager {
     });
     contents.once("destroyed", () => {
       this.configuredContents.delete(contents.id);
+      this.insertedCssKeys.delete(contents.id);
       if (!contents.isDestroyed()) {
         contents.off("did-create-window", onCreatedWindow);
+        contents.off("did-finish-load", onDidFinishLoad);
         contents.off("will-navigate", navigationGuard);
         contents.off("will-redirect", navigationGuard);
       }
@@ -403,6 +414,43 @@ export class BrowserSessionManager {
 
     // 子窗口本身也是完整浏览器上下文；保留参数便于后续增加来源提示。
     void inherited;
+  }
+
+  /** 更新用户 CSS，并立即同步到所有已打开的浏览器标签和认证弹窗。 */
+  async setCustomCss(css: string): Promise<void> {
+    if (typeof css !== "string") throw new Error("浏览器自定义 CSS 必须是字符串");
+    if (css.length > 1_000_000) throw new Error("浏览器自定义 CSS 不能超过 1 MB");
+    this.customCss = css;
+    this.customCssRevision += 1;
+    await Promise.all(
+      [...this.configuredContents.values()].map((contents) =>
+        this.applyCustomCss(contents)
+      )
+    );
+  }
+
+  private async applyCustomCss(contents: WebContents): Promise<void> {
+    if (contents.isDestroyed()) return;
+    const revision = this.customCssRevision;
+    const css = this.customCss.trim();
+    const previousKey = this.insertedCssKeys.get(contents.id);
+    if (previousKey) {
+      this.insertedCssKeys.delete(contents.id);
+      await contents.removeInsertedCSS(previousKey).catch(() => undefined);
+    }
+    if (!css || contents.isDestroyed() || revision !== this.customCssRevision) return;
+
+    try {
+      const key = await contents.insertCSS(css, { cssOrigin: "user" });
+      if (contents.isDestroyed()) return;
+      if (revision !== this.customCssRevision) {
+        await contents.removeInsertedCSS(key).catch(() => undefined);
+        return;
+      }
+      this.insertedCssKeys.set(contents.id, key);
+    } catch {
+      // 导航中的 WebContents 可能暂时拒绝注入；did-finish-load 会自动重试。
+    }
   }
 
   async snapshot(): Promise<BrowserSessionSnapshot> {

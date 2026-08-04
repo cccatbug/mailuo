@@ -17,6 +17,7 @@ import {
   type ThemePalette,
 } from "@/lib/theme";
 import type { AssistantPermissionMode } from "@/shared/assistant";
+import { quoteFontFamily } from "@/lib/system-fonts";
 
 export type ViewMode = "list" | "graph" | "stats" | "matrix";
 export type { Theme, ThemeMode, ThemePalette } from "@/lib/theme";
@@ -32,6 +33,10 @@ export interface AppSettings {
   fontBody: "sans" | "serif";
   /** 标题字体 */
   fontHeading: "serif" | "sans";
+  /** 用户从操作系统字体中选择的全局应用字体；空字符串表示应用默认。 */
+  appFontFamily: string;
+  /** 注入内置浏览器所有页面的用户 CSS。 */
+  browserCustomCss: string;
   locale: Locale;
   /** 小枢对文件、命令与浏览器操作的全局授权方式。 */
   assistantPermissionMode: AssistantPermissionMode;
@@ -48,8 +53,19 @@ function applyAppearance(s: AppSettings) {
   // zoom 在 WKWebView 与 WebView2 中均可用，等比缩放整个界面
   (document.body.style as CSSStyleDeclaration & { zoom?: string }).zoom =
     s.uiScale === 1 ? "" : String(s.uiScale);
-  root.style.setProperty("--font-sans", FONT_STACKS[s.fontBody]);
-  root.style.setProperty("--font-heading", FONT_STACKS[s.fontHeading]);
+  const selectedFont = s.appFontFamily.trim();
+  root.style.setProperty(
+    "--font-sans",
+    selectedFont
+      ? `${quoteFontFamily(selectedFont)}, ${FONT_STACKS[s.fontBody]}`
+      : FONT_STACKS[s.fontBody]
+  );
+  root.style.setProperty(
+    "--font-heading",
+    selectedFont
+      ? `${quoteFontFamily(selectedFont)}, ${FONT_STACKS[s.fontHeading]}`
+      : FONT_STACKS[s.fontHeading]
+  );
 }
 
 export type AiDialog =
@@ -178,6 +194,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   uiScale: 1,
   fontBody: "sans",
   fontHeading: "serif",
+  appFontFamily: "",
+  browserCustomCss: "",
   locale: "zh-CN",
   assistantPermissionMode: "confirm-sensitive",
 };
@@ -205,6 +223,10 @@ function loadSettings(): AppSettings {
         typeof stored.uiScale === "number" ? stored.uiScale : DEFAULT_SETTINGS.uiScale,
       fontBody: stored.fontBody === "serif" ? "serif" : "sans",
       fontHeading: stored.fontHeading === "sans" ? "sans" : "serif",
+      appFontFamily:
+        typeof stored.appFontFamily === "string" ? stored.appFontFamily : "",
+      browserCustomCss:
+        typeof stored.browserCustomCss === "string" ? stored.browserCustomCss : "",
       locale: stored.locale === "en" ? "en" : "zh-CN",
       assistantPermissionMode,
     };

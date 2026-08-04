@@ -162,6 +162,7 @@ export interface MailuoApi {
   openBrowserDownload: (filePath: string) => Promise<string>;
   onBrowserOpenTab: (handler: (url: string) => void) => () => void;
   clearBrowserData: (scope?: "cookies" | "all") => Promise<void>;
+  setBrowserCustomCss: (css: string) => Promise<void>;
   listBrowserTabs: () => Promise<BrowserTabInfo[]>;
   registerBrowserTab: (
     registration: BrowserTabRegistration

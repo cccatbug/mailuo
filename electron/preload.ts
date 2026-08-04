@@ -213,6 +213,8 @@ const api = {
   },
   clearBrowserData: (scope: "cookies" | "all" = "all"): Promise<void> =>
     ipcRenderer.invoke("browser:clear-data", scope),
+  setBrowserCustomCss: (css: string): Promise<void> =>
+    ipcRenderer.invoke("browser:custom-css:set", css),
   listBrowserTabs: (): Promise<BrowserTabInfo[]> =>
     ipcRenderer.invoke("browser:tabs:list"),
   registerBrowserTab: (

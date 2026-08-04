@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  Check,
+  Code2,
   Cookie,
   Database,
   FolderOpen,
@@ -12,10 +14,12 @@ import {
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import {
   bridge,
   type BrowserSessionSnapshot,
 } from "@/lib/bridge";
+import { useAppStore } from "@/store/useAppStore";
 
 function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`;
@@ -27,6 +31,11 @@ export function BrowserSettingsPane() {
   const { t } = useTranslation();
   const [snapshot, setSnapshot] = useState<BrowserSessionSnapshot | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const customCss = useAppStore((state) => state.settings.browserCustomCss);
+  const setSettings = useAppStore((state) => state.setSettings);
+  const [cssDraft, setCssDraft] = useState(customCss);
+
+  useEffect(() => setCssDraft(customCss), [customCss]);
 
   const refresh = useCallback(async () => {
     if (!bridge) return;
@@ -85,6 +94,21 @@ export function BrowserSettingsPane() {
     }
   };
 
+  const applyCustomCss = async () => {
+    setBusy("css");
+    try {
+      await bridge?.setBrowserCustomCss(cssDraft);
+      setSettings({ browserCustomCss: cssDraft });
+      toast.success(cssDraft.trim() ? "自定义 CSS 已应用" : "已恢复网页默认样式", {
+        description: "已打开的网页和之后新开的页面都会同步更新。",
+      });
+    } catch (error) {
+      toast.error("应用自定义 CSS 失败", { description: String(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -137,6 +161,58 @@ export function BrowserSettingsPane() {
           <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => void importCookies()}>
             <Import />从 Cookie JSON 导入
           </Button>
+        </div>
+      </section>
+
+      <section className="overflow-hidden rounded-xl border bg-card">
+        <div className="flex items-center gap-3 border-b p-4">
+          <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <Code2 className="size-4" />
+          </div>
+          <div>
+            <p className="text-sm font-medium">网页自定义 CSS</p>
+            <p className="text-xs text-muted-foreground">
+              注入所有内置浏览器标签页与登录弹窗，仅改变显示样式。
+            </p>
+          </div>
+        </div>
+        <div className="space-y-3 p-4">
+          <Textarea
+            value={cssDraft}
+            spellCheck={false}
+            aria-label="浏览器自定义 CSS"
+            placeholder={`/* 示例：统一网页字体 */\nhtml, body, input, textarea, button {\n  font-family: "Microsoft YaHei", sans-serif !important;\n}`}
+            className="min-h-52 resize-y font-mono text-xs leading-relaxed"
+            onChange={(event) => setCssDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                event.preventDefault();
+                void applyCustomCss();
+              }
+            }}
+          />
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-muted-foreground">
+              {cssDraft.length.toLocaleString()} 字符 · Ctrl/⌘ + Enter 应用
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="ml-auto"
+              disabled={!cssDraft || busy !== null}
+              onClick={() => setCssDraft("")}
+            >
+              清空
+            </Button>
+            <Button
+              size="sm"
+              disabled={cssDraft === customCss || busy !== null}
+              onClick={() => void applyCustomCss()}
+            >
+              {busy === "css" ? <LoaderCircle className="animate-spin" /> : <Check />}
+              应用样式
+            </Button>
+          </div>
         </div>
       </section>
 

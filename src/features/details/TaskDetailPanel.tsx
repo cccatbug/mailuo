@@ -113,7 +113,7 @@ function NotesEditor({
           autoFocus={Boolean(value)}
           value={value}
           placeholder="写点什么…（支持 markdown，输入 # 引用项目资产）"
-          className="min-h-24 resize-y font-mono text-xs leading-relaxed"
+          className="min-h-24 resize-y font-sans text-sm leading-relaxed"
           onChange={(e) => {
             onChange(e.target.value);
             const match = /(?:^|\s)#([^\s#]*)$/.exec(e.target.value.slice(0, e.target.selectionStart ?? 0));

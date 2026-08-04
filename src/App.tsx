@@ -100,6 +100,7 @@ export default function App() {
   const assistantPermissionMode = useAppStore(
     (s) => s.settings.assistantPermissionMode
   );
+  const browserCustomCss = useAppStore((s) => s.settings.browserCustomCss);
 
   useEffect(() => {
     void init();
@@ -112,6 +113,13 @@ export default function App() {
   useEffect(() => {
     void bridge?.setAssistantPermissionMode(assistantPermissionMode);
   }, [assistantPermissionMode]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    void bridge?.setBrowserCustomCss(browserCustomCss).catch((error) => {
+      console.error("应用浏览器自定义 CSS 失败", error);
+    });
+  }, [browserCustomCss, loaded]);
 
   useEffect(() => {
     return bridge?.onBrowserDownload((event) => {
