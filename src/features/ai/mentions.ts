@@ -26,6 +26,23 @@ export function mentionInputToken(mention: AssistantMention): string {
   return `@${mentionLabel(mention)}`;
 }
 
+/** 去掉仅供界面区分 mention 类型的 kind，保持 IPC browserTabs 契约干净。 */
+export function browserTabContext(
+  mentions: AssistantMention[]
+): Omit<BrowserTabMention, "kind">[] {
+  return mentions.flatMap((mention) =>
+    mention.kind === "browser-tab"
+      ? [
+          {
+            tabId: mention.tabId,
+            title: mention.title,
+            url: mention.url,
+          },
+        ]
+      : []
+  );
+}
+
 export function buildMentionCandidates(
   tasks: Task[],
   tabs: BrowserTabInfo[],

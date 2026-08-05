@@ -1,9 +1,9 @@
 import { memo } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { bridge } from "@/lib/bridge";
-import { openFilePanel } from "@/components/DockLayout";
+import { toast } from "sonner";
 import { useAppStore } from "@/store/useAppStore";
+import { openResource } from "@/features/files/resource-navigation";
 
 /** 紧凑型 markdown 渲染（聊天气泡内，流式期间可反复重渲染） */
 export const Md = memo(function Md({ text }: { text: string }) {
@@ -21,15 +21,25 @@ export const Md = memo(function Md({ text }: { text: string }) {
             return assetId ? (
               <button
                 className="text-primary underline underline-offset-2"
-                onClick={() => {
-                  if (!projectId) return;
-                  void bridge?.resolveAsset(projectId, assetId).then(({ asset, absolutePath }) =>
-                    openFilePanel(absolutePath, asset.mimeType, asset.name)
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void openResource(href ?? "", projectId).catch((error) =>
+                    toast.error(error instanceof Error ? error.message : "无法打开引用文件")
                   );
                 }}
               >{children}</button>
             ) : (
-              <a href={href} target="_blank" rel="noreferrer" className="text-primary underline underline-offset-2">
+              <a
+                href={href}
+                className="text-primary underline underline-offset-2"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  void openResource(href ?? "", projectId).catch((error) =>
+                    toast.error(error instanceof Error ? error.message : "无法打开链接")
+                  );
+                }}
+              >
                 {children}
               </a>
             );

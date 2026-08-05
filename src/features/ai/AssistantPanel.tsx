@@ -61,16 +61,15 @@ import {
   type ComposerAttachment,
 } from "./attachments";
 import { Md } from "./Markdown";
-import type { AiModelRef } from "@/shared/ai-config";
+import type { AiModelRef, AiRequestContext } from "@/shared/ai-config";
 import type { RouteResolutionStatus } from "@/shared/ai-config";
 import type { AssetRecord, AssetReference } from "@/shared/assets";
 import { openAsset } from "@/features/files/AssetPanel";
 import type {
   AssistantMention,
   BrowserApprovalRequest,
-  BrowserTabMention,
 } from "@/shared/browser";
-import { mentionKey, mentionLabel } from "./mentions";
+import { browserTabContext, mentionKey, mentionLabel } from "./mentions";
 import type {
   AssistantApprovalRequest,
   AssistantTodoItem,
@@ -318,10 +317,7 @@ async function sendMessage(
       .map((mention) => mention.taskId)
   );
   const mentioned = projectTasks.filter((t) => mentionedTaskIds.has(t.id));
-  const browserTabs = mentions.filter(
-    (mention): mention is BrowserTabMention =>
-      mention.kind === "browser-tab"
-  );
+  const browserTabs = browserTabContext(mentions);
   const mentionContext = mentioned.length
     ? `\n\n【用户 @ 引用的任务详情】\n${mentioned
         .map(
@@ -418,7 +414,7 @@ async function completeAssistantTurn({
   skillNames: string[];
   staleContext: string;
   modelOverride?: AiModelRef;
-  browserTabs: BrowserTabMention[];
+  browserTabs: NonNullable<AiRequestContext["browserTabs"]>;
 }): Promise<void> {
   let fullText = "";
   let segText = "";

@@ -72,6 +72,7 @@ import { polishNotesWithToast } from "@/features/tasks/TaskListPanel";
 import { Md } from "@/features/ai/Markdown";
 import { bridge } from "@/lib/bridge";
 import type { AssetRecord } from "@/shared/assets";
+import { openResource } from "@/features/files/resource-navigation";
 
 /** Obsidian 式备注：失焦渲染 markdown，点击进入编辑 */
 function NotesEditor({
@@ -396,22 +397,30 @@ function extractResources(notes: string): ResourceLink[] {
   return result.slice(0, 12);
 }
 
-function ResourcesSection({ resources }: { resources: ResourceLink[] }) {
+function ResourcesSection({
+  resources,
+  projectId,
+}: {
+  resources: ResourceLink[];
+  projectId: string | null;
+}) {
   if (resources.length === 0) return null;
   return (
     <div className="flex flex-wrap gap-1.5">
       {resources.map((r) => (
-        <a
+        <button
           key={r.url}
-          href={r.url}
-          target="_blank"
-          rel="noreferrer"
           className="flex items-center gap-1 rounded-full border bg-card px-2.5 py-1 text-xs text-primary transition-colors hover:border-primary/50 hover:bg-accent"
           title={r.url}
+          onClick={() => {
+            void openResource(r.url, projectId).catch((error) =>
+              toast.error(error instanceof Error ? error.message : "无法打开资源")
+            );
+          }}
         >
           <ExternalLink className="size-3 shrink-0" />
           <span className="max-w-[180px] truncate">{r.label}</span>
-        </a>
+        </button>
       ))}
     </div>
   );
@@ -425,6 +434,7 @@ export function TaskDetailPanel() {
   const restoreTask = useAppStore((s) => s.restoreTask);
   const setStatus = useAppStore((s) => s.setStatus);
   const removeDep = useAppStore((s) => s.removeDep);
+  const projectId = useAppStore((s) => s.selectedProjectId);
 
   const [dateOpen, setDateOpen] = useState(false);
 
@@ -583,7 +593,7 @@ export function TaskDetailPanel() {
                 <ExternalLink className="size-3.5" />
                 资源链接
               </FieldLabel>
-              <ResourcesSection resources={resources} />
+              <ResourcesSection resources={resources} projectId={projectId} />
             </Field>
           )}
 

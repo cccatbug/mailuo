@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Task } from "@/types";
 import type { BrowserTabInfo } from "@/shared/browser";
-import { buildMentionCandidates } from "./mentions";
+import { aiRequestContextSchema } from "@/shared/ai-config";
+import { browserTabContext, buildMentionCandidates } from "./mentions";
 
 const task = {
   id: "task-1",
@@ -48,5 +49,20 @@ describe("buildMentionCandidates", () => {
     expect(
       buildMentionCandidates([task], [tab], [candidates[0].mention], "release")
     ).toEqual([]);
+  });
+
+  it("serializes browser mentions without the UI-only kind discriminator", () => {
+    const mention = buildMentionCandidates([task], [tab], [], "release")[0]
+      .mention;
+    const browserTabs = browserTabContext([mention]);
+
+    expect(browserTabs).toEqual([
+      {
+        tabId: "browser:docs",
+        title: "Release docs",
+        url: "https://docs.example.com/release",
+      },
+    ]);
+    expect(() => aiRequestContextSchema.parse({ browserTabs })).not.toThrow();
   });
 });
