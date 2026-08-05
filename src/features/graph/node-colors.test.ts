@@ -15,6 +15,7 @@ function task(id: string, createdAt: number, deps: string[] = []): Task {
     deps,
     createdAt,
     completedAt: null,
+    tracking: { type: "standard" },
   };
 }
 

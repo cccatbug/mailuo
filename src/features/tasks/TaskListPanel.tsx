@@ -3,6 +3,7 @@ import {
   ArrowDownToDot,
   ArrowUpFromDot,
   Bot,
+  CalendarCheck2,
   CalendarDays,
   Check,
   ChevronDown,
@@ -10,6 +11,7 @@ import {
   Circle,
   CircleDashed,
   CopyPlus,
+  Gauge,
   ListTree,
   Lock,
   Play,
@@ -72,6 +74,7 @@ import {
 import type { Task } from "@/types";
 import { PRIORITY_LABEL } from "@/types";
 import { dependentsOf, isBlocked } from "@/lib/deps";
+import { taskTrackingSnapshot } from "@/lib/task-tracking";
 import { TaskFlow } from "@/features/graph/TaskFlow";
 import { StatsPanel } from "@/features/stats/StatsPanel";
 import { MatrixPanel } from "@/features/matrix/MatrixPanel";
@@ -98,6 +101,10 @@ function StatusIcon({ task, blocked }: { task: Task; blocked: boolean }) {
       </span>
     );
   if (blocked) return <Lock className="size-5 p-0.5 text-muted-foreground" />;
+  if (task.tracking.type === "progress")
+    return <Gauge className="size-5 text-primary" />;
+  if (task.tracking.type === "checkin")
+    return <CalendarCheck2 className="size-5 text-primary" />;
   if (task.status === "doing")
     return <CircleDashed className="size-5 text-status-doing" />;
   return <Circle className="size-5 text-muted-foreground/60" />;
@@ -107,6 +114,7 @@ function TaskRow({ task, byId }: { task: Task; byId: Map<string, Task> }) {
   const selectedTaskId = useAppStore((s) => s.selectedTaskId);
   const selectTask = useAppStore((s) => s.selectTask);
   const setStatus = useAppStore((s) => s.setStatus);
+  const trackTask = useAppStore((s) => s.trackTask);
   const setPriority = useAppStore((s) => s.setPriority);
   const updateTask = useAppStore((s) => s.updateTask);
   const deleteTask = useAppStore((s) => s.deleteTask);
@@ -120,8 +128,17 @@ function TaskRow({ task, byId }: { task: Task; byId: Map<string, Task> }) {
   const done = task.status === "done";
   const dependents = dependentsOf(task.id, tasks).length;
   const due = task.dueDate ? fmtDue(task.dueDate) : null;
+  const tracking = taskTrackingSnapshot(task);
 
   const toggleDone = () => {
+    if (task.tracking.type === "checkin") {
+      trackTask(task.id, { type: "toggle-checkin" });
+      return;
+    }
+    if (task.tracking.type === "progress") {
+      selectTask(task.id);
+      return;
+    }
     if (blocked) {
       toast.warning("前置任务未完成，暂不可完成");
       return;
@@ -159,7 +176,17 @@ function TaskRow({ task, byId }: { task: Task; byId: Map<string, Task> }) {
             <TooltipTrigger asChild>
               <button
                 className="shrink-0"
-                aria-label={done ? "标记为未完成" : "标记完成"}
+                aria-label={
+                  task.tracking.type === "checkin"
+                    ? tracking.checkedInCurrentPeriod
+                      ? `撤销${tracking.currentPeriodLabel}打卡`
+                      : `${tracking.currentPeriodLabel}打卡`
+                    : task.tracking.type === "progress"
+                      ? "调整任务进度"
+                      : done
+                        ? "标记为未完成"
+                        : "标记完成"
+                }
                 onClick={(e) => {
                   e.stopPropagation();
                   toggleDone();
@@ -169,11 +196,17 @@ function TaskRow({ task, byId }: { task: Task; byId: Map<string, Task> }) {
               </button>
             </TooltipTrigger>
             <TooltipContent>
-              {blocked
-                ? "受阻：前置任务未完成"
-                : done
-                  ? "点击恢复为待办"
-                  : "点击标记完成"}
+              {task.tracking.type === "checkin"
+                ? tracking.checkedInCurrentPeriod
+                  ? `撤销${tracking.currentPeriodLabel}打卡`
+                  : `${tracking.currentPeriodLabel}打卡`
+                : task.tracking.type === "progress"
+                  ? "在任务详情中调整进度"
+                  : blocked
+                    ? "受阻：前置任务未完成"
+                    : done
+                      ? "点击恢复为待办"
+                      : "点击标记完成"}
             </TooltipContent>
           </Tooltip>
 
@@ -185,6 +218,20 @@ function TaskRow({ task, byId }: { task: Task; byId: Map<string, Task> }) {
           >
             {task.title}
           </span>
+
+          {task.tracking.type !== "standard" && (
+            <Badge
+              variant="secondary"
+              className="hidden max-w-36 gap-1 truncate tabular-nums md:inline-flex"
+            >
+              {task.tracking.type === "checkin" ? (
+                <CalendarCheck2 className="size-3" />
+              ) : (
+                <Gauge className="size-3" />
+              )}
+              {tracking.summary}
+            </Badge>
+          )}
 
           {task.tags.slice(0, 2).map((tag) => (
             <Badge key={tag} variant="outline" className="hidden lg:inline-flex">
@@ -233,22 +280,36 @@ function TaskRow({ task, byId }: { task: Task; byId: Map<string, Task> }) {
       </ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuGroup>
-          {task.status !== "doing" && !done && (
+          {task.tracking.type === "standard" && task.status !== "doing" && !done && (
             <ContextMenuItem onClick={() => setStatus(task.id, "doing")}>
               <Play />
               开始进行
             </ContextMenuItem>
           )}
-          {!done && (
+          {task.tracking.type === "standard" && !done && (
             <ContextMenuItem disabled={blocked} onClick={toggleDone}>
               <Check />
               标记完成
             </ContextMenuItem>
           )}
-          {done && (
+          {task.tracking.type === "standard" && done && (
             <ContextMenuItem onClick={() => setStatus(task.id, "todo")}>
               <RotateCcw />
               恢复为待办
+            </ContextMenuItem>
+          )}
+          {task.tracking.type === "checkin" && (
+            <ContextMenuItem onClick={toggleDone}>
+              <CalendarCheck2 />
+              {tracking.checkedInCurrentPeriod
+                ? `撤销${tracking.currentPeriodLabel}打卡`
+                : `${tracking.currentPeriodLabel}打卡`}
+            </ContextMenuItem>
+          )}
+          {task.tracking.type === "progress" && (
+            <ContextMenuItem onClick={() => selectTask(task.id)}>
+              <Gauge />
+              调整进度
             </ContextMenuItem>
           )}
           <ContextMenuItem

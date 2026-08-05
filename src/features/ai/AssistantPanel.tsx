@@ -74,6 +74,7 @@ import type {
   AssistantApprovalRequest,
   AssistantTodoItem,
 } from "@/shared/assistant";
+import { taskTrackingSnapshot } from "@/lib/task-tracking";
 
 /* ---------- 消息模型：分段时间线（文本 / 思考 / 工具） ---------- */
 
@@ -321,10 +322,18 @@ async function sendMessage(
   const mentionContext = mentioned.length
     ? `\n\n【用户 @ 引用的任务详情】\n${mentioned
         .map(
-          (t) =>
-            `「${t.title}」 状态:${t.status} 优先级:${t.priority}${
+          (t) => {
+            const tracking = taskTrackingSnapshot(t);
+            return `「${t.title}」 状态:${t.status} 优先级:${t.priority}${
+              t.tracking.type === "progress"
+                ? ` 进度:${tracking.summary}`
+                : t.tracking.type === "checkin"
+                  ? ` ${tracking.summary} 连续:${tracking.streak}`
+                  : ""
+            }${
               t.dueDate ? ` 期限:${t.dueDate}` : ""
-            }${t.notes ? `\n备注:${t.notes}` : ""}`
+            }${t.notes ? `\n备注:${t.notes}` : ""}`;
+          }
         )
         .join("\n")}`
     : "";

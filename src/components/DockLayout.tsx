@@ -7,7 +7,6 @@ import {
   type DockviewReadyEvent,
   type IDockviewHeaderActionsProps,
   type IDockviewPanelProps,
-  type IContextMenuItemComponentProps,
 } from "dockview-react";
 import "dockview-react/dist/styles/dockview.css";
 import {
@@ -25,9 +24,6 @@ import {
   Sparkles,
   SquareKanban,
   Trash2,
-  X,
-  CopyX,
-  ListX,
   LockKeyhole,
   ShieldCheck,
   Zap,
@@ -70,32 +66,6 @@ import {
 } from "./dock-panel-renderer";
 
 const LAYOUT_KEY = "mailuo-dock-v1";
-
-function DockContextMenuItem({
-  componentProps,
-}: IContextMenuItemComponentProps) {
-  const props = componentProps as
-    | {
-        label: string;
-        kind: "close" | "others" | "all";
-        destructive?: boolean;
-      }
-    | undefined;
-  if (!props) return null;
-  const Icon =
-    props.kind === "close" ? X : props.kind === "others" ? CopyX : ListX;
-  return (
-    <span
-      className={cn(
-        "flex w-full items-center gap-2",
-        props.destructive && "text-destructive"
-      )}
-    >
-      <Icon className="size-3.5" />
-      {props.label}
-    </span>
-  );
-}
 
 /* ---------- 面板内容 ---------- */
 
@@ -752,11 +722,6 @@ export function DockLayout() {
       getTabContextMenuItems={({ panel, group }) => [
         {
           label: t("dock.close"),
-          component: DockContextMenuItem,
-          componentProps: {
-            label: t("dock.close"),
-            kind: "close",
-          },
           action: () =>
             closeDockPanels(
               group.panels.map((candidate) => ({
@@ -769,11 +734,6 @@ export function DockLayout() {
         },
         {
           label: t("dock.closeOthers"),
-          component: DockContextMenuItem,
-          componentProps: {
-            label: t("dock.closeOthers"),
-            kind: "others",
-          },
           disabled: group.panels.length <= 1,
           action: () =>
             closeDockPanels(
@@ -788,12 +748,6 @@ export function DockLayout() {
         "separator",
         {
           label: t("dock.closeAll"),
-          component: DockContextMenuItem,
-          componentProps: {
-            label: t("dock.closeAll"),
-            kind: "all",
-            destructive: true,
-          },
           action: () =>
             closeDockPanels(
               group.panels.map((candidate) => ({

@@ -3,6 +3,7 @@ import { useAppStore } from "@/store/useAppStore";
 import type { Priority, Status, Task } from "@/types";
 import { sanitizeChartSpec, type ChartSpec } from "./AiChart";
 import { sanitizeUiSpec, type UiSpec } from "./uiCatalog";
+import { taskTrackingSnapshot } from "@/lib/task-tracking";
 
 /* ---------- 上下文构造 ---------- */
 
@@ -13,6 +14,7 @@ export function projectContext(projectId: string): string {
   const date = (timestamp: number) =>
     new Date(timestamp).toISOString().slice(0, 10);
   const lines = list.map((t, i) => {
+    const tracking = taskTrackingSnapshot(t);
     const deps = t.deps
       .map((d) => list.findIndex((x) => x.id === d))
       .filter((n) => n >= 0)
@@ -20,6 +22,12 @@ export function projectContext(projectId: string): string {
       .join(",");
     return `T${i + 1} 「${t.title}」 状态:${t.status} 优先级:${t.priority}${
       t.dueDate ? ` 期限:${t.dueDate}` : ""
+    }${
+      t.tracking.type === "progress"
+        ? ` 类型:进度 进度:${tracking.summary}`
+        : t.tracking.type === "checkin"
+          ? ` 类型:打卡 进度:${tracking.summary} 连续:${tracking.streak}`
+          : " 类型:普通"
     }${t.tags.length ? ` 标签:[${t.tags.join(",")}]` : ""}${
       typeof t.importance === "number"
         ? ` 重要度:${Math.round(t.importance * 100)}`

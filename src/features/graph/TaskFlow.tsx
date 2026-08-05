@@ -20,8 +20,10 @@ import "@xyflow/react/dist/style.css";
 import { toast } from "sonner";
 import {
   ArrowLeft,
+  CalendarCheck2,
   Check,
   Focus,
+  Gauge,
   LayoutGrid,
   Link2,
   ListPlus,
@@ -43,6 +45,7 @@ import type { Task } from "@/types";
 import { TaskNode, type TaskNodeType } from "./TaskNode";
 import { assignTaskColorSlots } from "./node-colors";
 import { layoutWithDagre, NODE_H, NODE_W } from "./layout";
+import { taskTrackingSnapshot } from "@/lib/task-tracking";
 
 const nodeTypes = { task: TaskNode };
 
@@ -401,13 +404,30 @@ function Flow({ tasks, wrapRef }: { tasks: Task[]; wrapRef: React.RefObject<HTML
     const store = useAppStore.getState();
     let done = 0;
     let blocked = 0;
+    let tracked = 0;
     selectedIds.forEach((id) => {
-      if (store.setStatus(id, "done")) done += 1;
-      else blocked += 1;
+      const task = store.tasks.find((candidate) => candidate.id === id);
+      if (task?.tracking.type !== "standard") {
+        tracked += 1;
+      } else if (store.setStatus(id, "done")) {
+        done += 1;
+      } else {
+        blocked += 1;
+      }
     });
-    if (done === 0) toast.error("所选任务均受阻，无法完成");
-    else if (blocked > 0) toast.success(`已完成 ${done} 项，${blocked} 项受阻未完成`);
-    else toast.success(`已完成 ${done} 项`);
+    if (done === 0 && tracked > 0 && blocked === 0) {
+      toast.info("进度与打卡任务需要分别记录，已保留原状态");
+    } else if (done === 0) {
+      toast.error("所选普通任务均受阻，无法完成");
+    } else {
+      const remainder = [
+        blocked > 0 ? `${blocked} 项受阻` : "",
+        tracked > 0 ? `${tracked} 项需单独记录` : "",
+      ].filter(Boolean);
+      toast.success(
+        `已完成 ${done} 项${remainder.length ? `，${remainder.join("，")}` : ""}`
+      );
+    }
   }, [selectedIds]);
 
   const batchDelete = useCallback(() => {
@@ -670,11 +690,12 @@ function Flow({ tasks, wrapRef }: { tasks: Task[]; wrapRef: React.RefObject<HTML
                 const task = byId.get(menu.taskId);
                 if (!task) return null;
                 const blocked = isBlocked(task, byId);
+                const tracking = taskTrackingSnapshot(task);
                 const s = useAppStore.getState();
                 const close = () => setMenu(null);
                 return (
                   <>
-                    {task.status !== "doing" && task.status !== "done" && (
+                    {task.tracking.type === "standard" && task.status !== "doing" && task.status !== "done" && (
                       <MenuButton
                         icon={Play}
                         label="开始进行"
@@ -684,7 +705,7 @@ function Flow({ tasks, wrapRef }: { tasks: Task[]; wrapRef: React.RefObject<HTML
                         }}
                       />
                     )}
-                    {task.status !== "done" ? (
+                    {task.tracking.type === "standard" && (task.status !== "done" ? (
                       <MenuButton
                         icon={Check}
                         label="标记完成"
@@ -700,6 +721,30 @@ function Flow({ tasks, wrapRef }: { tasks: Task[]; wrapRef: React.RefObject<HTML
                         label="恢复为待办"
                         onClick={() => {
                           s.setStatus(task.id, "todo");
+                          close();
+                        }}
+                      />
+                    ))}
+                    {task.tracking.type === "checkin" && (
+                      <MenuButton
+                        icon={CalendarCheck2}
+                        label={
+                          tracking.checkedInCurrentPeriod
+                            ? `撤销${tracking.currentPeriodLabel}打卡`
+                            : `${tracking.currentPeriodLabel}打卡`
+                        }
+                        onClick={() => {
+                          s.trackTask(task.id, { type: "toggle-checkin" });
+                          close();
+                        }}
+                      />
+                    )}
+                    {task.tracking.type === "progress" && (
+                      <MenuButton
+                        icon={Gauge}
+                        label={`调整进度 · ${tracking.summary}`}
+                        onClick={() => {
+                          s.selectTask(task.id);
                           close();
                         }}
                       />

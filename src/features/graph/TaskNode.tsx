@@ -1,11 +1,12 @@
 import { memo, type CSSProperties } from "react";
 import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
-import { CalendarDays, Lock } from "lucide-react";
+import { CalendarCheck2, CalendarDays, Gauge, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import type { Task } from "@/types";
 import { PRIORITY_LABEL } from "@/types";
 import type { GraphDirection } from "@/store/useAppStore";
+import { taskTrackingSnapshot } from "@/lib/task-tracking";
 
 export type TaskNodeType = Node<
   {
@@ -54,7 +55,7 @@ function NodeFrame({
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       className={cn(
-        "task-node-card w-48 rounded-xl border px-3 py-2.5 shadow-sm transition-colors",
+        "task-node-card w-52 rounded-xl border px-3 py-2.5 shadow-sm transition-colors",
         selected && "task-node-selected border-primary ring-2 ring-ring",
         className
       )}
@@ -70,6 +71,7 @@ export const TaskNode = memo(function TaskNode({
 }: NodeProps<TaskNodeType>) {
   const { task, blocked, direction, colorSlot, dimmed, editing } = data;
   const done = task.status === "done";
+  const tracking = taskTrackingSnapshot(task);
 
   // 双击进入的行内改名
   if (editing) {
@@ -152,6 +154,29 @@ export const TaskNode = memo(function TaskNode({
           </span>
         )}
       </div>
+      {task.tracking.type !== "standard" && (
+        <div className="mt-2">
+          <div className="mb-1 flex items-center gap-1 text-[10px] text-muted-foreground">
+            {task.tracking.type === "checkin" ? (
+              <CalendarCheck2 className="size-3" />
+            ) : (
+              <Gauge className="size-3" />
+            )}
+            <span className="truncate tabular-nums">{tracking.summary}</span>
+            <span className="ml-auto shrink-0 tabular-nums">
+              {task.tracking.type === "checkin"
+                ? `连续 ${tracking.streak}`
+                : `${tracking.percent}%`}
+            </span>
+          </div>
+          <div className="h-1 overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full rounded-full bg-primary transition-[width]"
+              style={{ width: `${tracking.percent}%` }}
+            />
+          </div>
+        </div>
+      )}
       <Handle
         type="source"
         position={direction === "LR" ? Position.Right : Position.Bottom}

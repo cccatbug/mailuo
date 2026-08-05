@@ -232,8 +232,12 @@ function DataPane() {
   }, [b]);
 
   const exportJson = async () => {
-    const { projects, tasks } = useAppStore.getState();
-    const json = JSON.stringify({ version: 2, projects, tasks }, null, 2);
+    const { projects, tasks, tagLibrary } = useAppStore.getState();
+    const json = JSON.stringify(
+      { version: 3, projects, tasks, tagLibrary },
+      null,
+      2
+    );
     await navigator.clipboard.writeText(json);
     toast.success("数据 JSON 已复制到剪贴板");
   };

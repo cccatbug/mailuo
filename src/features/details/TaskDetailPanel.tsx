@@ -4,6 +4,8 @@ import { zhCN } from "date-fns/locale";
 import {
   ArrowDownToDot,
   ArrowUpFromDot,
+  BookOpen,
+  CalendarCheck2,
   CalendarDays,
   ExternalLink,
   Link2,
@@ -13,6 +15,7 @@ import {
   Sparkles,
   SquareSplitVertical,
   Tag,
+  Target,
   Trash2,
   X,
 } from "lucide-react";
@@ -23,6 +26,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -64,8 +68,8 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { useAppStore } from "@/store/useAppStore";
-import type { Status, Task } from "@/types";
-import { PRIORITY_LABEL, STATUS_LABEL } from "@/types";
+import type { Status, Task, TaskType } from "@/types";
+import { PRIORITY_LABEL, STATUS_LABEL, TASK_TYPE_LABEL } from "@/types";
 import { dependentsOf, isBlocked, wouldCreateCycle } from "@/lib/deps";
 import { MiniBoard } from "@/features/matrix/MiniBoard";
 import { polishNotesWithToast } from "@/features/tasks/TaskListPanel";
@@ -73,6 +77,7 @@ import { Md } from "@/features/ai/Markdown";
 import { bridge } from "@/lib/bridge";
 import type { AssetRecord } from "@/shared/assets";
 import { openResource } from "@/features/files/resource-navigation";
+import { taskTrackingSnapshot } from "@/lib/task-tracking";
 
 /** Obsidian 式备注：失焦渲染 markdown，点击进入编辑 */
 function NotesEditor({
@@ -360,6 +365,192 @@ function TagEditor({ task }: { task: Task }) {
   );
 }
 
+function TaskTrackingEditor({ task }: { task: Task }) {
+  const trackTask = useAppStore((state) => state.trackTask);
+  const snapshot = taskTrackingSnapshot(task);
+  const tracking = task.tracking;
+
+  return (
+    <div className="flex flex-col gap-2.5">
+      <ToggleGroup
+        type="single"
+        variant="outline"
+        className="w-full"
+        value={tracking.type}
+        onValueChange={(value) => {
+          if (!value || value === tracking.type) return;
+          trackTask(task.id, {
+            type: "set-type",
+            taskType: value as TaskType,
+          });
+        }}
+      >
+        {(["standard", "progress", "checkin"] as TaskType[]).map((type) => (
+          <ToggleGroupItem key={type} value={type} className="flex-1">
+            {type === "standard" ? (
+              <Target />
+            ) : type === "progress" ? (
+              <BookOpen />
+            ) : (
+              <CalendarCheck2 />
+            )}
+            {TASK_TYPE_LABEL[type]}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
+
+      {tracking.type === "standard" && (
+        <p className="text-xs text-muted-foreground">
+          一次性目标，由你手动标记完成。
+        </p>
+      )}
+
+      {tracking.type === "progress" && (
+        <div className="rounded-lg border bg-card p-3">
+          <div className="mb-2 flex items-center justify-between gap-2 text-xs">
+            <span className="font-medium">{snapshot.summary}</span>
+            <span className="text-muted-foreground tabular-nums">
+              {snapshot.percent}%
+            </span>
+          </div>
+          <Progress value={snapshot.percent} className="mb-3 h-1.5" />
+          <div className="grid grid-cols-[1fr_1fr_72px] gap-2">
+            <label className="flex flex-col gap-1 text-[10px] text-muted-foreground">
+              当前
+              <Input
+                type="number"
+                min={0}
+                max={tracking.target}
+                step="any"
+                key={`current-${tracking.current}`}
+                defaultValue={tracking.current}
+                className="h-7 text-xs tabular-nums"
+                onBlur={(event) =>
+                  trackTask(task.id, {
+                    type: "set-progress",
+                    current: Number(event.currentTarget.value),
+                  })
+                }
+                onKeyDown={(event) =>
+                  event.key === "Enter" && event.currentTarget.blur()
+                }
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-[10px] text-muted-foreground">
+              目标
+              <Input
+                type="number"
+                min={1}
+                step="any"
+                key={`target-${tracking.target}`}
+                defaultValue={tracking.target}
+                className="h-7 text-xs tabular-nums"
+                onBlur={(event) =>
+                  trackTask(task.id, {
+                    type: "set-progress",
+                    target: Number(event.currentTarget.value),
+                  })
+                }
+                onKeyDown={(event) =>
+                  event.key === "Enter" && event.currentTarget.blur()
+                }
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-[10px] text-muted-foreground">
+              单位
+              <Input
+                key={`unit-${tracking.unit}`}
+                defaultValue={tracking.unit}
+                maxLength={12}
+                className="h-7 text-xs"
+                onBlur={(event) =>
+                  trackTask(task.id, {
+                    type: "set-progress",
+                    unit: event.currentTarget.value,
+                  })
+                }
+                onKeyDown={(event) =>
+                  event.key === "Enter" && event.currentTarget.blur()
+                }
+              />
+            </label>
+          </div>
+        </div>
+      )}
+
+      {tracking.type === "checkin" && (
+        <div className="rounded-lg border bg-card p-3">
+          <div className="mb-1.5 flex items-center justify-between gap-2 text-xs">
+            <span className="font-medium">{snapshot.summary}</span>
+            <span className="text-muted-foreground">
+              连续 {snapshot.streak} {tracking.cadence === "daily" ? "天" : "月"}
+            </span>
+          </div>
+          <Progress value={snapshot.percent} className="mb-3 h-1.5" />
+          <div className="mb-3 grid grid-cols-[1fr_96px] gap-2">
+            <label className="flex flex-col gap-1 text-[10px] text-muted-foreground">
+              打卡周期
+              <ToggleGroup
+                type="single"
+                variant="outline"
+                value={tracking.cadence}
+                className="h-7"
+                onValueChange={(cadence) => {
+                  if (!cadence) return;
+                  trackTask(task.id, {
+                    type: "set-checkin",
+                    cadence: cadence as "daily" | "monthly",
+                  });
+                }}
+              >
+                <ToggleGroupItem value="daily" className="h-7 flex-1 text-xs">
+                  每日
+                </ToggleGroupItem>
+                <ToggleGroupItem value="monthly" className="h-7 flex-1 text-xs">
+                  每月
+                </ToggleGroupItem>
+              </ToggleGroup>
+            </label>
+            <label className="flex flex-col gap-1 text-[10px] text-muted-foreground">
+              目标次数
+              <Input
+                type="number"
+                min={1}
+                key={`checkin-target-${tracking.target}`}
+                defaultValue={tracking.target}
+                className="h-7 text-xs tabular-nums"
+                onBlur={(event) =>
+                  trackTask(task.id, {
+                    type: "set-checkin",
+                    target: Number(event.currentTarget.value),
+                  })
+                }
+                onKeyDown={(event) =>
+                  event.key === "Enter" && event.currentTarget.blur()
+                }
+              />
+            </label>
+          </div>
+          <Button
+            variant={snapshot.checkedInCurrentPeriod ? "secondary" : "default"}
+            className="w-full"
+            onClick={() => trackTask(task.id, { type: "toggle-checkin" })}
+          >
+            <CalendarCheck2 data-icon="inline-start" />
+            {snapshot.checkedInCurrentPeriod
+              ? `撤销${snapshot.currentPeriodLabel}打卡`
+              : `${snapshot.currentPeriodLabel}打卡`}
+          </Button>
+          <p className="mt-2 text-[10px] text-muted-foreground">
+            同一{tracking.cadence === "daily" ? "自然日" : "自然月"}
+            最多记录一次；切换周期会重新开始记录。
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface ResourceLink {
   label: string;
   url: string;
@@ -386,10 +577,7 @@ function extractResources(notes: string): ResourceLink[] {
     const url = m[0].replace(/[.,;:!?]*$/, ""); // 去掉末尾标点
     if (!seen.has(url)) {
       seen.add(url);
-      const label =
-    url.length > 52
-      ? url.slice(0, 49) + "..."
-      : url;
+      const label = url.length > 52 ? url.slice(0, 49) + "..." : url;
       result.push({ label, url });
     }
   }
@@ -510,6 +698,7 @@ export function TaskDetailPanel() {
               value={task.status}
               onValueChange={(v) => {
                 if (!v) return;
+                if (task.tracking.type !== "standard") return;
                 const ok = setStatus(task.id, v as Status);
                 if (!ok) toast.warning("前置任务未完成，暂不可完成");
               }}
@@ -518,13 +707,36 @@ export function TaskDetailPanel() {
                 <ToggleGroupItem
                   key={s}
                   value={s}
-                  disabled={s === "done" && blocked}
+                  disabled={
+                    task.tracking.type !== "standard" ||
+                    (s === "done" && blocked)
+                  }
                   className="flex-1"
                 >
                   {STATUS_LABEL[s]}
                 </ToggleGroupItem>
               ))}
             </ToggleGroup>
+            {task.tracking.type !== "standard" && (
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                状态随{task.tracking.type === "progress" ? "进度" : "打卡"}
+                自动更新。
+              </p>
+            )}
+          </Field>
+
+          <Field>
+            <FieldLabel>
+              {task.tracking.type === "checkin" ? (
+                <CalendarCheck2 className="size-3.5" />
+              ) : task.tracking.type === "progress" ? (
+                <BookOpen className="size-3.5" />
+              ) : (
+                <Target className="size-3.5" />
+              )}
+              任务类型
+            </FieldLabel>
+            <TaskTrackingEditor task={task} />
           </Field>
 
           <Field>

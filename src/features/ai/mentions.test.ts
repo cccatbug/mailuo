@@ -16,6 +16,7 @@ const task = {
   deps: [],
   createdAt: 1,
   completedAt: null,
+  tracking: { type: "standard" },
 } satisfies Task;
 
 const tab = {

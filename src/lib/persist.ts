@@ -1,18 +1,23 @@
 import type { PersistedData, Task } from "@/types";
 import { bridge } from "./bridge";
+import { normalizeTaskTracking } from "./task-tracking";
 
 const LS_KEY = "mailuo-data";
 
-/** 旧版本数据结构补齐（v1 → v2 增加 tags 字段） */
+/** 旧版本数据结构补齐（v2 → v3 增加任务追踪类型） */
 function migrate(raw: unknown): PersistedData | null {
   if (raw === null || typeof raw !== "object") return null;
   const data = raw as { projects?: unknown; tasks?: unknown };
   if (!Array.isArray(data.projects) || !Array.isArray(data.tasks)) return null;
   const lib = (raw as { tagLibrary?: unknown }).tagLibrary;
   return {
-    version: 2,
+    version: 3,
     projects: data.projects,
-    tasks: (data.tasks as Task[]).map((t) => ({ ...t, tags: t.tags ?? [] })),
+    tasks: (data.tasks as Task[]).map((t) => ({
+      ...t,
+      tags: t.tags ?? [],
+      tracking: normalizeTaskTracking(t.tracking),
+    })),
     tagLibrary: Array.isArray(lib) ? (lib as string[]) : undefined,
   };
 }
@@ -34,7 +39,7 @@ export function schedulePersist(
 ) {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
-    const json = JSON.stringify({ version: 2, ...data } satisfies PersistedData);
+    const json = JSON.stringify({ version: 3, ...data } satisfies PersistedData);
     try {
       if (bridge) {
         await bridge.saveState(json);

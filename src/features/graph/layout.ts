@@ -1,8 +1,8 @@
 import dagre from "@dagrejs/dagre";
 import type { GraphDirection } from "@/store/useAppStore";
 
-export const NODE_W = 192;
-export const NODE_H = 76;
+export const NODE_W = 208;
+export const NODE_H = 100;
 
 export interface LayoutInput {
   id: string;

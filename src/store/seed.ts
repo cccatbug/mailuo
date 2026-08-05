@@ -37,6 +37,7 @@ export function seedData(): PersistedData {
     deps: deps.map((d) => d.id),
     createdAt: Date.now() - 86400000 * 5 + seq++ * 3600000,
     completedAt: status === "done" ? Date.now() - 3600000 * seq : null,
+    tracking: { type: "standard" },
   });
 
   const t1 = mk("旧站内容盘点", "done", [], "normal", p1.id, ["内容"]);
@@ -50,12 +51,23 @@ export function seedData(): PersistedData {
   const t9 = mk("全站测试", "todo", [t7, t8], "high", p1.id, ["研发"]);
   const t10 = mk("正式上线", "todo", [t9], "high", p1.id);
 
-  const r1 = mk("读完《置身事内》", "doing", [], "normal", p2.id, ["阅读"]);
+  const r1 = {
+    ...mk("读完《置身事内》", "doing", [], "normal", p2.id, ["阅读"]),
+    tracking: { type: "progress", current: 118, target: 360, unit: "页" } as const,
+  };
   const r2 = mk("整理读书笔记", "todo", [r1], "normal", p2.id, ["笔记"]);
-  const r3 = mk("写一篇书评", "todo", [r2], "low", p2.id, ["写作"]);
+  const r3 = {
+    ...mk("每日写作", "doing", [], "low", p2.id, ["写作"]),
+    tracking: {
+      type: "checkin",
+      cadence: "daily",
+      target: 30,
+      records: [] as string[],
+    } as const,
+  };
 
   return {
-    version: 2,
+    version: 3,
     projects: [p1, p2],
     tasks: [t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, r1, r2, r3],
   };

@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Mailuo flower icon</title>
+  <desc id="desc">A lively pink flower bud growing from green grass under a blue sky.</desc>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#66c9ff"/>
+      <stop offset="1" stop-color="#b9ecff"/>
+    </linearGradient>
+    <linearGradient id="hillBack" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#66cc68"/>
+      <stop offset="1" stop-color="#32a95c"/>
+    </linearGradient>
+    <linearGradient id="hillFront" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#43b963"/>
+      <stop offset="1" stop-color="#16844c"/>
+    </linearGradient>
+    <linearGradient id="petalLeft" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff96bd"/>
+      <stop offset="1" stop-color="#ef4f91"/>
+    </linearGradient>
+    <linearGradient id="petalRight" x1="1" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ff81b0"/>
+      <stop offset="1" stop-color="#db377f"/>
+    </linearGradient>
+    <linearGradient id="petalCenter" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffc0d6"/>
+      <stop offset="1" stop-color="#f45c9a"/>
+    </linearGradient>
+    <filter id="softShadow" x="-30%" y="-30%" width="160%" height="180%">
+      <feDropShadow dx="0" dy="20" stdDeviation="18" flood-color="#075b4a" flood-opacity=".2"/>
+    </filter>
+    <clipPath id="roundedTile">
+      <rect width="1024" height="1024" rx="224"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#roundedTile)">
+    <rect width="1024" height="1024" fill="url(#sky)"/>
+    <circle cx="790" cy="230" r="92" fill="#fff4a8" opacity=".9"/>
+    <circle cx="790" cy="230" r="126" fill="none" stroke="#fff" stroke-width="18" opacity=".18"/>
+
+    <path d="M-80 700C105 578 246 612 386 676C537 745 683 620 805 596C908 576 1010 618 1096 684V1092H-80Z" fill="url(#hillBack)"/>
+    <path d="M-75 788C94 666 238 700 357 766C474 831 584 779 693 719C820 650 965 700 1100 809V1090H-75Z" fill="url(#hillFront)"/>
+
+    <g filter="url(#softShadow)">
+      <path d="M513 805C503 689 511 567 523 452" fill="none" stroke="#126f49" stroke-width="42" stroke-linecap="round"/>
+      <path d="M510 782C503 681 510 568 522 465" fill="none" stroke="#2ead64" stroke-width="23" stroke-linecap="round"/>
+
+      <path d="M500 664C420 580 330 582 278 625C344 701 426 716 500 682Z" fill="#43c66f" stroke="#13784b" stroke-width="18" stroke-linejoin="round"/>
+      <path d="M289 630C360 644 424 661 490 678" fill="none" stroke="#199653" stroke-width="14" stroke-linecap="round"/>
+
+      <path d="M525 724C588 624 680 608 747 644C704 731 621 767 531 744Z" fill="#58d477" stroke="#13784b" stroke-width="18" stroke-linejoin="round"/>
+      <path d="M733 650C657 677 595 711 540 738" fill="none" stroke="#219d57" stroke-width="14" stroke-linecap="round"/>
+
+      <path d="M526 490C463 474 422 438 402 390C452 394 490 412 526 444C562 412 600 394 650 390C630 438 589 474 526 490Z" fill="#238f54" stroke="#126943" stroke-width="17" stroke-linejoin="round"/>
+
+      <path d="M520 444C444 441 384 377 390 292C392 258 409 226 439 203C493 242 523 303 520 444Z" fill="url(#petalLeft)" stroke="#bb2d70" stroke-width="19" stroke-linejoin="round"/>
+      <path d="M522 444C598 441 658 377 652 292C650 258 633 226 603 203C549 242 519 303 522 444Z" fill="url(#petalRight)" stroke="#bb2d70" stroke-width="19" stroke-linejoin="round"/>
+      <path d="M521 435C474 386 464 311 492 236C501 211 511 190 521 176C557 222 578 282 572 338C568 380 549 414 521 435Z" fill="url(#petalCenter)" stroke="#c23577" stroke-width="19" stroke-linejoin="round"/>
+      <path d="M452 280C433 324 440 366 467 397" fill="none" stroke="#ffd5e4" stroke-width="17" stroke-linecap="round" opacity=".7"/>
+    </g>
+
+    <path d="M190 814c18-48 41-74 68-80M836 820c-12-48-34-79-66-92M888 848c7-36 24-61 51-76" fill="none" stroke="#7be38a" stroke-width="18" stroke-linecap="round" opacity=".8"/>
+    <rect x="10" y="10" width="1004" height="1004" rx="214" fill="none" stroke="#fff" stroke-width="20" opacity=".2"/>
+  </g>
+</svg>

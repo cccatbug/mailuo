@@ -18,6 +18,12 @@ import {
 } from "@/lib/theme";
 import type { AssistantPermissionMode } from "@/shared/assistant";
 import { quoteFontFamily } from "@/lib/system-fonts";
+import {
+  normalizeTaskTracking,
+  reconcileTrackedTaskStatuses,
+  updateTaskTracking,
+  type TaskTrackingAction,
+} from "@/lib/task-tracking";
 
 export type ViewMode = "list" | "graph" | "stats" | "matrix";
 export type { Theme, ThemeMode, ThemePalette } from "@/lib/theme";
@@ -152,6 +158,7 @@ interface AppStore {
   restoreTask: (removed: RemovedTask) => void;
   duplicateTask: (id: string) => Task | null;
   setStatus: (id: string, status: Status) => boolean;
+  trackTask: (id: string, action: TaskTrackingAction) => boolean;
   setPriority: (id: string, priority: Priority) => void;
   setQuadrant: (id: string, q: Quadrant) => void;
   /** 棋盘连续坐标（0..1），同步优先级 */
@@ -312,7 +319,7 @@ export const useAppStore = create<AppStore>((set, get) => {
         themePalette: preference.palette,
         settings,
         projects: data.projects,
-        tasks: data.tasks,
+        tasks: reconcileTrackedTaskStatuses(data.tasks),
         tagLibrary,
         selectedProjectId: data.projects[0]?.id ?? null,
       });
@@ -382,7 +389,12 @@ export const useAppStore = create<AppStore>((set, get) => {
     replaceData: (projects, tasks) => {
       commit({
         projects,
-        tasks,
+        tasks: reconcileTrackedTaskStatuses(
+          tasks.map((task) => ({
+            ...task,
+            tracking: normalizeTaskTracking(task.tracking),
+          }))
+        ),
         selectedProjectId: projects[0]?.id ?? null,
         selectedTaskId: null,
         graphFocusTaskId: null,
@@ -553,15 +565,26 @@ export const useAppStore = create<AppStore>((set, get) => {
         deps: [],
         createdAt: Date.now(),
         completedAt: null,
+        tracking: { type: "standard" },
         ...patch,
       };
+      task.tracking = normalizeTaskTracking(task.tracking);
       commit({ tasks: [...tasks, task], selectedTaskId: task.id });
       return task;
     },
 
     updateTask: (id, patch) => {
+      const updated = get().tasks.map((t) =>
+        t.id === id
+          ? {
+              ...t,
+              ...patch,
+              tracking: normalizeTaskTracking(patch.tracking ?? t.tracking),
+            }
+          : t
+      );
       commit({
-        tasks: get().tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+        tasks: reconcileTrackedTaskStatuses(updated),
       });
     },
 
@@ -574,13 +597,15 @@ export const useAppStore = create<AppStore>((set, get) => {
         .filter((t) => t.deps.includes(id))
         .map((t) => t.id);
       const patch: Partial<AppStore> = {
-        tasks: tasks
-          .filter((t) => t.id !== id)
-          .map((t) =>
-            t.deps.includes(id)
-              ? { ...t, deps: t.deps.filter((d) => d !== id) }
-              : t
-          ),
+        tasks: reconcileTrackedTaskStatuses(
+          tasks
+            .filter((t) => t.id !== id)
+            .map((t) =>
+              t.deps.includes(id)
+                ? { ...t, deps: t.deps.filter((d) => d !== id) }
+                : t
+            )
+        ),
         selectedTaskId: selectedTaskId === id ? null : selectedTaskId,
       };
       if (graphFocusTaskId === id) patch.graphFocusTaskId = null;
@@ -597,12 +622,12 @@ export const useAppStore = create<AppStore>((set, get) => {
       const { tasks } = get();
       const refs = new Set(removed.referencedBy);
       commit({
-        tasks: [
+        tasks: reconcileTrackedTaskStatuses([
           ...tasks.map((t) =>
             refs.has(t.id) ? { ...t, deps: [...t.deps, removed.task.id] } : t
           ),
           removed.task,
-        ],
+        ]),
         selectedTaskId: removed.task.id,
       });
     },
@@ -618,6 +643,12 @@ export const useAppStore = create<AppStore>((set, get) => {
         status: "todo",
         createdAt: Date.now(),
         completedAt: null,
+        tracking:
+          src.tracking.type === "progress"
+            ? { ...src.tracking, current: 0 }
+            : src.tracking.type === "checkin"
+              ? { ...src.tracking, records: [] }
+              : { type: "standard" },
       };
       commit({ tasks: [...tasks, copy], selectedTaskId: copy.id });
       return copy;
@@ -628,19 +659,32 @@ export const useAppStore = create<AppStore>((set, get) => {
       const byId = new Map(tasks.map((t) => [t.id, t]));
       const task = byId.get(id);
       if (!task) return false;
+      if (task.tracking.type !== "standard") return false;
       // 受阻任务不可直接完成
       if (status === "done" && isBlocked(task, byId)) return false;
       commit({
-        tasks: tasks.map((t) =>
-          t.id === id
-            ? {
-                ...t,
-                status,
-                completedAt: status === "done" ? Date.now() : null,
-              }
-            : t
+        tasks: reconcileTrackedTaskStatuses(
+          tasks.map((t) =>
+            t.id === id
+              ? {
+                  ...t,
+                  status,
+                  completedAt: status === "done" ? Date.now() : null,
+                }
+              : t
+          )
         ),
       });
+      return true;
+    },
+
+    trackTask: (id, action) => {
+      const tasks = get().tasks;
+      if (!tasks.some((task) => task.id === id)) return false;
+      const updated = tasks.map((task) =>
+        task.id === id ? updateTaskTracking(task, action) : task
+      );
+      commit({ tasks: reconcileTrackedTaskStatuses(updated) });
       return true;
     },
 
@@ -728,21 +772,23 @@ export const useAppStore = create<AppStore>((set, get) => {
       if (!task || !dep || task.projectId !== dep.projectId) return "invalid";
       if (task.deps.includes(depId)) return "dup";
       if (wouldCreateCycle(taskId, depId, byId)) return "cycle";
+      const updated = tasks.map((t) =>
+        t.id === taskId ? { ...t, deps: [...t.deps, depId] } : t
+      );
       commit({
-        tasks: tasks.map((t) =>
-          t.id === taskId ? { ...t, deps: [...t.deps, depId] } : t
-        ),
+        tasks: reconcileTrackedTaskStatuses(updated),
       });
       return "ok";
     },
 
     removeDep: (taskId, depId) => {
+      const updated = get().tasks.map((t) =>
+        t.id === taskId
+          ? { ...t, deps: t.deps.filter((d) => d !== depId) }
+          : t
+      );
       commit({
-        tasks: get().tasks.map((t) =>
-          t.id === taskId
-            ? { ...t, deps: t.deps.filter((d) => d !== depId) }
-            : t
-        ),
+        tasks: reconcileTrackedTaskStatuses(updated),
       });
     },
   };
