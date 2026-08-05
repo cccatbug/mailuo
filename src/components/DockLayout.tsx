@@ -42,7 +42,12 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { TaskListPanel } from "@/features/tasks/TaskListPanel";
 import { TaskDetailPanel } from "@/features/details/TaskDetailPanel";
@@ -248,34 +253,38 @@ function TasksActions() {
   const selectedProjectId = useAppStore((s) => s.selectedProjectId);
   return (
     <div className="flex h-full items-center gap-1 pr-1.5">
-      <div className="flex items-center gap-0.5">
-        {VIEW_TABS.map((t) => (
-          <Tooltip key={t.key}>
-            <TooltipTrigger asChild>
-              <button
-                className={cn(
-                  "flex items-center gap-1 rounded-md px-2 py-1 text-xs transition-colors [&_svg]:size-3.5",
-                  view === t.key
-                    ? "bg-accent font-medium text-accent-foreground"
-                    : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-                )}
-                onClick={() => setView(t.key)}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  openViewPanel(t.key);
-                }}
-                onAuxClick={(e) => {
-                  if (e.button === 1) openViewPanel(t.key);
-                }}
-              >
-                {t.icon}
-                {t.label}
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>右键 / 中键：在新标签页打开</TooltipContent>
-          </Tooltip>
-        ))}
-      </div>
+      <TooltipProvider delayDuration={900} skipDelayDuration={0}>
+        <div className="flex items-center gap-0.5">
+          {VIEW_TABS.map((t) => (
+            <Tooltip key={t.key}>
+              <TooltipTrigger asChild>
+                <button
+                  aria-label={t.label}
+                  className={cn(
+                    "flex size-7 items-center justify-center rounded-md transition-colors [&_svg]:size-4",
+                    view === t.key
+                      ? "bg-accent font-medium text-accent-foreground"
+                      : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+                  )}
+                  onClick={() => setView(t.key)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    openViewPanel(t.key);
+                  }}
+                  onAuxClick={(e) => {
+                    if (e.button === 1) openViewPanel(t.key);
+                  }}
+                >
+                  {t.icon}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {t.label} · 右键 / 中键可在新标签页打开
+              </TooltipContent>
+            </Tooltip>
+          ))}
+        </div>
+      </TooltipProvider>
       {view === "graph" && (
         <>
           <ToggleGroup
