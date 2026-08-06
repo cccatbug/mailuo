@@ -572,21 +572,52 @@
   --dv-floating-titlebar-color: var(--foreground);
   --dv-group-border-color: var(--border);
 }
-.dv-tab {
+.dv-tabs-container[aria-orientation="horizontal"] {
+  padding-inline: 10px;
+}
+.dv-tabs-container[aria-orientation="horizontal"] > .dv-tab {
   margin: 4px 2px 0;
-  border-radius: 999px 999px 0 0;
+  border-radius: 10px 10px 0 0;
   transition: background-color 120ms ease, color 120ms ease, opacity 120ms ease;
 }
 .dv-tab .dv-default-tab {
   padding-inline: 8px;
   opacity: 1;
 }
-.dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tab.dv-active-tab {
+.dv-tabs-container[aria-orientation="horizontal"] > .dv-tab.dv-active-tab {
   position: relative;
-  z-index: 1;
+  z-index: 2;
+  box-shadow: 0 1px 0 var(--mailuo-active-tab-surface);
+}
+.dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tab.dv-active-tab {
+  --mailuo-active-tab-surface: var(--dv-activegroup-visiblepanel-tab-background-color);
   font-weight: 600;
 }
+.dv-groupview.dv-inactive-group > .dv-tabs-and-actions-container .dv-tab.dv-active-tab {
+  --mailuo-active-tab-surface: var(--dv-inactivegroup-visiblepanel-tab-background-color);
+}
+.dv-tabs-container[aria-orientation="horizontal"] > .dv-tab.dv-active-tab .dv-default-tab::before,
+.dv-tabs-container[aria-orientation="horizontal"] > .dv-tab.dv-active-tab .dv-default-tab::after {
+  position: absolute;
+  bottom: 0;
+  width: 10px;
+  height: 10px;
+  content: "";
+  pointer-events: none;
+}
+.dv-tabs-container[aria-orientation="horizontal"] > .dv-tab.dv-active-tab .dv-default-tab::before {
+  left: calc(-0.5rem - 10px);
+  border-bottom-right-radius: 10px;
+  box-shadow: 5px 0 0 var(--mailuo-active-tab-surface);
+}
+.dv-tabs-container[aria-orientation="horizontal"] > .dv-tab.dv-active-tab .dv-default-tab::after {
+  right: calc(-0.5rem - 10px);
+  border-bottom-left-radius: 10px;
+  box-shadow: -5px 0 0 var(--mailuo-active-tab-surface);
+}
 .dv-tab.dv-inactive-tab {
+  margin-block: 5px 3px;
+  border-radius: 8px;
   opacity: 0.68;
 }
 .dv-tab.dv-inactive-tab:hover {
