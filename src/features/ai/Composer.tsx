@@ -39,6 +39,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { bridge } from "@/lib/bridge";
+import { isImeComposing, isSubmitKey } from "@/lib/keyboard";
 import { useAppStore } from "@/store/useAppStore";
 import type { Task } from "@/types";
 import type { AssistantContextUsage } from "@/shared/assistant";
@@ -719,6 +720,8 @@ export function Composer({
           }}
           onPaste={onPaste}
           onKeyDown={(e) => {
+            // 输入法候选窗开着时，方向键/回车/Tab 都属于候选词选择，不能被抢走
+            if (isImeComposing(e)) return;
             if (menu !== "none" && menuItems.length > 0) {
               if (e.key === "ArrowDown") {
                 e.preventDefault();
@@ -746,7 +749,7 @@ export function Composer({
                 return;
               }
             }
-            if (e.key === "Enter" && !e.shiftKey) {
+            if (isSubmitKey(e)) {
               e.preventDefault();
               void send();
             }

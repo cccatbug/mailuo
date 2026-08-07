@@ -46,6 +46,16 @@ const api = {
   loadState: (): Promise<string | null> => ipcRenderer.invoke("state:load"),
   saveState: (data: string): Promise<void> =>
     ipcRenderer.invoke("state:save", data),
+  /** 主进程在关窗前请求渲染进程把防抖中的改动落盘，等 handler 的 Promise 结束再关。 */
+  onFlushStateRequest: (handler: () => Promise<void>): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, token: string) => {
+      void handler()
+        .catch(() => undefined)
+        .finally(() => ipcRenderer.send("state:flush-done", token));
+    };
+    ipcRenderer.on("state:flush-request", listener);
+    return () => ipcRenderer.removeListener("state:flush-request", listener);
+  },
   getDataDir: (): Promise<string> => ipcRenderer.invoke("state:dir"),
   openDataDir: (): Promise<string> => ipcRenderer.invoke("state:open-dir"),
   openExternal: (url: string): Promise<void> =>

@@ -15,6 +15,7 @@ import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { isSubmitKey } from "@/lib/keyboard";
 import {
   bridge,
   type BrowserSessionSnapshot,
@@ -185,7 +186,10 @@ export function BrowserSettingsPane() {
             className="min-h-52 resize-y font-mono text-xs leading-relaxed"
             onChange={(event) => setCssDraft(event.target.value)}
             onKeyDown={(event) => {
-              if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+              if (
+                (event.metaKey || event.ctrlKey) &&
+                isSubmitKey(event, { allowShift: true })
+              ) {
                 event.preventDefault();
                 void applyCustomCss();
               }

@@ -74,6 +74,7 @@ import {
 import type { Task } from "@/types";
 import { PRIORITY_LABEL } from "@/types";
 import { dependentsOf, isBlocked } from "@/lib/deps";
+import { isSubmitKey } from "@/lib/keyboard";
 import { taskTrackingSnapshot } from "@/lib/task-tracking";
 import { TaskFlow } from "@/features/graph/TaskFlow";
 import { StatsPanel } from "@/features/stats/StatsPanel";
@@ -633,7 +634,7 @@ export function TaskListPanel({ fixedView }: { fixedView?: ViewMode } = {}) {
                 value={draft}
                 placeholder="添加一件事，回车记入脉络…"
                 onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && submitDraft()}
+                onKeyDown={(e) => isSubmitKey(e, { allowShift: true }) && submitDraft()}
               />
             </InputGroup>
             <Button onClick={submitDraft} disabled={!draft.trim()}>

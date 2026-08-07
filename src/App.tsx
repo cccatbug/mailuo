@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import { Minus, Square, X } from "lucide-react";
+import { FolderOpen, Minus, RotateCcw, Square, TriangleAlert, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAppStore } from "@/store/useAppStore";
@@ -18,6 +19,7 @@ import { CommandPalette } from "@/features/command/CommandPalette";
 import { SettingsDialog } from "@/features/settings/SettingsDialog";
 import { AiDialogs } from "@/features/ai/AiDialogs";
 import { bridge } from "@/lib/bridge";
+import { flushPersist, setPersistErrorHandler } from "@/lib/persist";
 import { toast } from "sonner";
 import { isMac } from "@/lib/platform";
 import { cn } from "@/lib/utils";
@@ -86,8 +88,45 @@ function TopStrip() {
   );
 }
 
+/**
+ * 存档读不出来时的兜底页。
+ *
+ * 关键在于「什么都不做」：既不 seed 也不写盘，否则会把用户真实存档覆盖掉。
+ */
+function LoadErrorScreen({ message }: { message: string }) {
+  return (
+    <div className="flex h-screen flex-col items-center justify-center gap-5 bg-background px-8">
+      <div className="flex size-12 items-center justify-center rounded-2xl border-2 border-dashed border-destructive/50">
+        <TriangleAlert className="size-6 text-destructive" />
+      </div>
+      <div className="max-w-md text-center">
+        <p className="font-heading text-lg font-bold">没能读出你的存档</p>
+        <p className="mt-1.5 text-sm text-muted-foreground">
+          为了不覆盖原有数据，脉络已经停在这里，没有写入任何内容。
+        </p>
+        <p className="mt-3 rounded-lg border bg-card px-3 py-2 text-left font-mono text-xs break-all text-muted-foreground">
+          {message}
+        </p>
+      </div>
+      <div className="flex items-center gap-3">
+        <Button onClick={() => window.location.reload()}>
+          <RotateCcw data-icon="inline-start" />
+          重试
+        </Button>
+        {bridge && (
+          <Button variant="outline" onClick={() => void bridge?.openDataDir()}>
+            <FolderOpen data-icon="inline-start" />
+            打开数据目录
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const loaded = useAppStore((s) => s.loaded);
+  const loadError = useAppStore((s) => s.loadError);
   const init = useAppStore((s) => s.init);
   const setView = useAppStore((s) => s.setView);
   const setCommandOpen = useAppStore((s) => s.setCommandOpen);
@@ -105,6 +144,36 @@ export default function App() {
   useEffect(() => {
     void init();
   }, [init]);
+
+  // 保存失败必须让用户看见，否则界面表现得像已保存
+  useEffect(() => {
+    setPersistErrorHandler((message) =>
+      toast.error("保存失败，改动可能未写入磁盘", {
+        description: message,
+        duration: Infinity,
+        action: { label: "重试", onClick: () => void flushPersist() },
+      })
+    );
+  }, []);
+
+  // 主进程关窗前会等这次落盘完成
+  useEffect(() => bridge?.onFlushStateRequest(() => flushPersist()), []);
+
+  // 关窗 / 隐藏前把防抖中的最后一次改动落盘
+  useEffect(() => {
+    const flush = () => void flushPersist();
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    window.addEventListener("beforeunload", flush);
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("beforeunload", flush);
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
 
   useEffect(() => {
     void i18n.changeLanguage(locale);
@@ -223,6 +292,8 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [setView, setCommandOpen, setSettingsOpen, setAssistantOpen, togglePanel]);
+
+  if (loadError) return <LoadErrorScreen message={loadError} />;
 
   if (!loaded) {
     return (

@@ -63,6 +63,7 @@ import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { toast } from "sonner";
 import { useAppStore } from "@/store/useAppStore";
 import { isBlocked } from "@/lib/deps";
+import { isSubmitKey } from "@/lib/keyboard";
 import type { Project, Task } from "@/types";
 import { PROJECT_COLORS } from "@/types";
 
@@ -188,7 +189,7 @@ function ProjectEditorDialog({
               value={name}
               placeholder="例如：新版官网上线"
               onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && submit()}
+              onKeyDown={(e) => isSubmitKey(e, { allowShift: true }) && submit()}
             />
           </Field>
           <Field>

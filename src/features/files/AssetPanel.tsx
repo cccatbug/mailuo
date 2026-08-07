@@ -27,7 +27,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { isTextEditingTarget } from "@/lib/keyboard";
+import { isSubmitKey, isTextEditingTarget } from "@/lib/keyboard";
 import {
   Dialog,
   DialogContent,
@@ -167,7 +167,8 @@ function TextActionDialog({
           value={value}
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && value.trim()) onSubmit(value.trim());
+            if (isSubmitKey(event, { allowShift: true }) && value.trim())
+              onSubmit(value.trim());
           }}
         />
         <DialogFooter>
@@ -430,7 +431,7 @@ export function AssetPanel() {
       } else if ((event.key === "Delete" || (event.metaKey && event.key === "Backspace")) && selected.size) {
         event.preventDefault();
         setDeleteTarget({ kind: "files", ids: [...selected] });
-      } else if (event.key === "Enter" && selectedAssets.length === 1 && projectId) {
+      } else if (isSubmitKey(event, { allowShift: true }) && selectedAssets.length === 1 && projectId) {
         void openAsset(projectId, selectedAssets[0]);
       }
     };

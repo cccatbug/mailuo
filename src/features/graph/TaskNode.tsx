@@ -2,6 +2,7 @@ import { memo, type CSSProperties } from "react";
 import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
 import { CalendarCheck2, CalendarDays, Gauge, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isImeComposing } from "@/lib/keyboard";
 import { Badge } from "@/components/ui/badge";
 import type { Task } from "@/types";
 import { PRIORITY_LABEL } from "@/types";
@@ -88,6 +89,7 @@ export const TaskNode = memo(function TaskNode({
           onFocus={(e) => e.currentTarget.select()}
           onKeyDown={(e) => {
             e.stopPropagation();
+            if (isImeComposing(e)) return;
             if (e.key === "Enter") e.currentTarget.blur();
             else if (e.key === "Escape") {
               e.currentTarget.value = task.title;

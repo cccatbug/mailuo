@@ -71,6 +71,7 @@ import { useAppStore } from "@/store/useAppStore";
 import type { Status, Task, TaskType } from "@/types";
 import { PRIORITY_LABEL, STATUS_LABEL, TASK_TYPE_LABEL } from "@/types";
 import { dependentsOf, isBlocked, wouldCreateCycle } from "@/lib/deps";
+import { isSubmitKey } from "@/lib/keyboard";
 import { MiniBoard } from "@/features/matrix/MiniBoard";
 import { polishNotesWithToast } from "@/features/tasks/TaskListPanel";
 import { Md } from "@/features/ai/Markdown";
@@ -141,7 +142,7 @@ function NotesEditor({
       title="点击编辑"
       className="min-h-16 cursor-text rounded-md border bg-card px-3 py-2 hover:border-primary/40"
       onClick={() => setEditing(true)}
-      onKeyDown={(e) => e.key === "Enter" && setEditing(true)}
+      onKeyDown={(e) => isSubmitKey(e, { allowShift: true }) && setEditing(true)}
     >
       <Md text={value} />
     </div>
@@ -339,7 +340,7 @@ function TagEditor({ task }: { task: Task }) {
         className="h-6 w-20 border-dashed px-2 text-xs shadow-none"
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && draft.trim()) {
+          if (isSubmitKey(e, { allowShift: true }) && draft.trim()) {
             addTag(task.id, draft);
             setDraft("");
           }
@@ -432,7 +433,8 @@ function TaskTrackingEditor({ task }: { task: Task }) {
                   })
                 }
                 onKeyDown={(event) =>
-                  event.key === "Enter" && event.currentTarget.blur()
+                  isSubmitKey(event, { allowShift: true }) &&
+                  event.currentTarget.blur()
                 }
               />
             </label>
@@ -452,7 +454,8 @@ function TaskTrackingEditor({ task }: { task: Task }) {
                   })
                 }
                 onKeyDown={(event) =>
-                  event.key === "Enter" && event.currentTarget.blur()
+                  isSubmitKey(event, { allowShift: true }) &&
+                  event.currentTarget.blur()
                 }
               />
             </label>
@@ -470,7 +473,8 @@ function TaskTrackingEditor({ task }: { task: Task }) {
                   })
                 }
                 onKeyDown={(event) =>
-                  event.key === "Enter" && event.currentTarget.blur()
+                  isSubmitKey(event, { allowShift: true }) &&
+                  event.currentTarget.blur()
                 }
               />
             </label>
@@ -526,7 +530,8 @@ function TaskTrackingEditor({ task }: { task: Task }) {
                   })
                 }
                 onKeyDown={(event) =>
-                  event.key === "Enter" && event.currentTarget.blur()
+                  isSubmitKey(event, { allowShift: true }) &&
+                  event.currentTarget.blur()
                 }
               />
             </label>

@@ -89,6 +89,8 @@ export interface RemovedTask {
 
 interface AppStore {
   loaded: boolean;
+  /** 存档读取失败的原因；非 null 时界面必须停在恢复页，不得写盘。 */
+  loadError: string | null;
   projects: Project[];
   tasks: Task[];
   tagLibrary: string[];
@@ -250,12 +252,15 @@ function applyTheme(theme: Theme, palette: ThemePalette) {
 export const useAppStore = create<AppStore>((set, get) => {
   const commit = (patch: Partial<AppStore>) => {
     set(patch);
-    const { projects, tasks, tagLibrary } = get();
+    const { projects, tasks, tagLibrary, loadError } = get();
+    // 存档没读出来时在内存里改动是可以的，但绝不能写回去覆盖原文件
+    if (loadError !== null) return;
     schedulePersist({ projects, tasks, tagLibrary });
   };
 
   return {
     loaded: false,
+    loadError: null,
     projects: [],
     tasks: [],
     tagLibrary: [],
@@ -301,9 +306,14 @@ export const useAppStore = create<AppStore>((set, get) => {
         set({ theme: resolved });
       });
 
-      let data = await loadPersisted();
-      const fresh = data === null;
-      if (data === null) data = seedData();
+      const result = await loadPersisted();
+      // 读失败绝不能当成首次启动：seed 会在 350ms 后原子覆盖用户真实存档
+      if (result.kind === "error") {
+        set({ loaded: true, loadError: result.message });
+        return;
+      }
+      const fresh = result.kind === "missing";
+      const data = fresh ? seedData() : result.data;
       const tagLibrary =
         data.tagLibrary ??
         [

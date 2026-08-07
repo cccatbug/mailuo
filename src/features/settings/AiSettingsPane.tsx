@@ -29,6 +29,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { bridge } from "@/lib/bridge";
+import { isSubmitKey } from "@/lib/keyboard";
 import {
   AI_API_TYPES,
   AI_PROVIDER_PRESETS,
@@ -1424,7 +1425,8 @@ function ModelsPane({
                   updateModel(model, { modelId: value });
                 }}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter") event.currentTarget.blur();
+                  if (isSubmitKey(event, { allowShift: true }))
+                    event.currentTarget.blur();
                 }}
               />
             </Field>

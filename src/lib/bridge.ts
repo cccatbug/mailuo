@@ -65,6 +65,7 @@ export interface MailuoApi {
   platform: string;
   loadState: () => Promise<string | null>;
   saveState: (data: string) => Promise<void>;
+  onFlushStateRequest: (handler: () => Promise<void>) => () => void;
   getDataDir: () => Promise<string>;
   openDataDir: () => Promise<string>;
   openExternal: (url: string) => Promise<void>;

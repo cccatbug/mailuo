@@ -5,6 +5,7 @@ import {
   ipcMain,
   shell,
 } from "electron";
+import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -104,16 +105,29 @@ function tauriDataFile(): string {
   );
 }
 
+function isMissing(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | null)?.code === "ENOENT";
+}
+
+/**
+ * Returns null only when there is genuinely no saved state yet.
+ *
+ * Any other failure (permissions, EBUSY, I/O) is rethrown: the renderer must be
+ * able to tell "first run" from "could not read", because it seeds demo data on
+ * the former and seeding over real data destroys it.
+ */
 async function loadState(): Promise<string | null> {
   try {
     return await fs.readFile(dataFile(), "utf8");
-  } catch {
+  } catch (error) {
+    if (!isMissing(error)) throw error;
     // 首次运行：尝试迁移 Tauri 时代的数据
     try {
       const legacy = await fs.readFile(tauriDataFile(), "utf8");
       await saveState(legacy);
       return legacy;
-    } catch {
+    } catch (legacyError) {
+      if (!isMissing(legacyError)) throw legacyError;
       return null;
     }
   }
@@ -131,6 +145,25 @@ async function saveState(data: string): Promise<void> {
 /* ---------- 窗口 ---------- */
 
 let win: BrowserWindow | null = null;
+
+/** 关窗前请渲染进程 flush 一次；渲染进程没响应就最多等 1.5s，不能卡住退出。 */
+function requestRendererFlush(target: BrowserWindow): Promise<void> {
+  if (target.webContents.isDestroyed()) return Promise.resolve();
+  const token = randomUUID();
+  return new Promise<void>((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      ipcMain.removeListener("state:flush-done", onDone);
+      resolve();
+    };
+    const onDone = (_event: Electron.IpcMainEvent, received: string) => {
+      if (received === token) done();
+    };
+    const timer = setTimeout(done, 1500);
+    ipcMain.on("state:flush-done", onDone);
+    target.webContents.send("state:flush-request", token);
+  });
+}
 
 function createWindow() {
   win = new BrowserWindow({
@@ -166,6 +199,15 @@ function createWindow() {
   });
 
   win.once("ready-to-show", () => win?.show());
+
+  // 关窗前给渲染进程一次落盘机会，否则防抖窗口里的最后一次改动会丢
+  let stateFlushed = false;
+  win.on("close", (event) => {
+    if (stateFlushed || !win) return;
+    event.preventDefault();
+    stateFlushed = true;
+    void requestRendererFlush(win).finally(() => win?.close());
+  });
   win.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
     return { action: "deny" };
