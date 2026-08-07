@@ -1,6 +1,4 @@
 import { useMemo, useState } from "react";
-import { format, parseISO } from "date-fns";
-import { zhCN } from "date-fns/locale";
 import {
   ArrowDownToDot,
   ArrowUpFromDot,
@@ -24,7 +22,6 @@ import { cn } from "@/lib/utils";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Calendar } from "@/components/ui/calendar";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
@@ -73,6 +70,8 @@ import { PRIORITY_LABEL, STATUS_LABEL, TASK_TYPE_LABEL } from "@/types";
 import { dependentsOf, isBlocked, wouldCreateCycle } from "@/lib/deps";
 import { isSubmitKey } from "@/lib/keyboard";
 import { useDebouncedCommit } from "@/lib/useDebouncedValue";
+import { describeSchedule, taskSchedule } from "@/lib/task-schedule";
+import { ScheduleEditor } from "./ScheduleEditor";
 import { MiniBoard } from "@/features/matrix/MiniBoard";
 import { polishNotesWithToast } from "@/features/tasks/TaskListPanel";
 import { Md } from "@/features/ai/Markdown";
@@ -410,10 +409,14 @@ function TaskTrackingEditor({ task }: { task: Task }) {
         value={tracking.type}
         onValueChange={(value) => {
           if (!value || value === tracking.type) return;
+          const recurring = taskSchedule(task).type === "recurring";
           trackTask(task.id, {
             type: "set-type",
             taskType: value as TaskType,
           });
+          if (recurring && value !== "standard") {
+            toast.info("定期安排已保留为本轮截止日期");
+          }
         }}
       >
         {(["standard", "progress", "checkin"] as TaskType[]).map((type) => (
@@ -656,10 +659,9 @@ export function TaskDetailPanel() {
   const deleteTask = useAppStore((s) => s.deleteTask);
   const restoreTask = useAppStore((s) => s.restoreTask);
   const setStatus = useAppStore((s) => s.setStatus);
+  const setSchedule = useAppStore((s) => s.setSchedule);
   const removeDep = useAppStore((s) => s.removeDep);
   const projectId = useAppStore((s) => s.selectedProjectId);
-
-  const [dateOpen, setDateOpen] = useState(false);
 
   const task = tasks.find((t) => t.id === selectedTaskId) ?? null;
   const byId = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
@@ -693,7 +695,7 @@ export function TaskDetailPanel() {
     .filter((t): t is Task => t !== undefined);
   const unfinishedDeps = deps.filter((d) => d.status !== "done").length;
   const dependents = dependentsOf(task.id, tasks);
-  const dueDate = task.dueDate ? parseISO(task.dueDate) : undefined;
+  const schedule = taskSchedule(task);
 
   const remove = () => {
     const removed = deleteTask(task.id);
@@ -733,6 +735,9 @@ export function TaskDetailPanel() {
                 if (task.tracking.type !== "standard") return;
                 const ok = setStatus(task.id, v as Status);
                 if (!ok) toast.warning("前置任务未完成，暂不可完成");
+                else if (v === "done" && schedule.type === "recurring") {
+                  toast.success("已完成本轮，下次处理日已顺延");
+                }
               }}
             >
               {(["todo", "doing", "done"] as Status[]).map((s) => (
@@ -782,45 +787,18 @@ export function TaskDetailPanel() {
           </Field>
 
           <Field>
-            <FieldLabel>期限</FieldLabel>
-            <div className="flex items-center gap-1.5">
-              <Popover open={dateOpen} onOpenChange={setDateOpen}>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className="flex-1 justify-start font-normal"
-                  >
-                    <CalendarDays data-icon="inline-start" />
-                    {dueDate
-                      ? format(dueDate, "yyyy年M月d日 EEEE", { locale: zhCN })
-                      : "设定日期"}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    mode="single"
-                    locale={zhCN}
-                    selected={dueDate}
-                    onSelect={(d) => {
-                      updateTask(task.id, {
-                        dueDate: d ? format(d, "yyyy-MM-dd") : null,
-                      });
-                      setDateOpen(false);
-                    }}
-                  />
-                </PopoverContent>
-              </Popover>
-              {task.dueDate && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label="清除期限"
-                  onClick={() => updateTask(task.id, { dueDate: null })}
-                >
-                  <X />
-                </Button>
-              )}
-            </div>
+            <FieldLabel>
+              <CalendarDays className="size-3.5" />
+              日期安排
+              <span className="font-normal text-muted-foreground">
+                · {describeSchedule(schedule)}
+              </span>
+            </FieldLabel>
+            <ScheduleEditor
+              schedule={schedule}
+              allowRecurring={task.tracking.type === "standard"}
+              onChange={(next) => setSchedule(task.id, next)}
+            />
           </Field>
 
           <Field>

@@ -40,6 +40,7 @@ import {
   type MemoryExtractor,
 } from "./memory-engine";
 import { createBrowserTools } from "./browser-tools";
+import { createTaskTools } from "./task-tools";
 import { createProviderToolsExtension } from "./provider-tools";
 import { BROWSER_CONTROL } from "./browser-runtime";
 import {
@@ -278,7 +279,7 @@ async function makeSession(
   });
   await resourceLoader.reload();
   const customTools = opts.withTools
-    ? [...createBrowserTools(cwd), createTodoTool()]
+    ? [...createBrowserTools(cwd), ...createTaskTools(), createTodoTool()]
     : [];
 
   const { session } = await createAgentSession({
@@ -304,6 +305,13 @@ async function makeSession(
           "browser_snapshot",
           "browser_act",
           "browser_capture",
+          "task_list",
+          "task_detail",
+          "task_create",
+          "task_update",
+          "task_delete",
+          "task_link",
+          "project_list",
           "todo_write",
         ]
       : [],

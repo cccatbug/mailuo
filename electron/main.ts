@@ -83,6 +83,7 @@ import {
   isExternalBrowserProtocol,
 } from "./browser-session";
 import { BROWSER_RUNTIME } from "./browser-runtime";
+import { TASK_RUNTIME } from "./task-runtime";
 import type {
   BrowserAgentMode,
   BrowserApprovalResponse,
@@ -90,6 +91,7 @@ import type {
   BrowserTabRegistration,
   BrowserTabUpdate,
 } from "../src/shared/browser";
+import type { TaskCommandResult } from "../src/shared/task-commands";
 
 const isMac = process.platform === "darwin";
 
@@ -443,6 +445,9 @@ function registerIpc() {
     (_event, result: BrowserTabCommandResult) =>
       BROWSER_RUNTIME.settleTabCommand(result)
   );
+  ipcMain.on("tasks:command-result", (_event, result: TaskCommandResult) =>
+    TASK_RUNTIME.settle(result)
+  );
   ipcMain.on(
     "browser:approval-response",
     (_event, response: BrowserApprovalResponse) =>
@@ -685,11 +690,13 @@ function registerIpc() {
   );
   ipcMain.handle("assistant:abort", async (_e, requestId: string) => {
     BROWSER_RUNTIME.cancelPending();
+    TASK_RUNTIME.cancelPending();
     ASSISTANT_CONTROL.cancelPending();
     return assistantAbort(requestId);
   });
   ipcMain.handle("assistant:reset", () => {
     BROWSER_RUNTIME.cancelPending();
+    TASK_RUNTIME.cancelPending();
     ASSISTANT_CONTROL.cancelPending();
     assistantReset();
   });
@@ -725,6 +732,7 @@ if (!app.requestSingleInstanceLock()) {
     );
     BROWSER_SESSION.initialize(() => win);
     BROWSER_RUNTIME.initialize(() => win);
+    TASK_RUNTIME.initialize(() => win);
     createWindow();
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -733,6 +741,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on("window-all-closed", () => {
     BROWSER_RUNTIME.cancelPending();
+    TASK_RUNTIME.cancelPending();
     assistantReset();
     if (!isMac) app.quit();
   });
@@ -740,6 +749,7 @@ if (!app.requestSingleInstanceLock()) {
   let browserDataFlushed = false;
   app.on("before-quit", (event) => {
     BROWSER_RUNTIME.cancelPending();
+    TASK_RUNTIME.cancelPending();
     assistantReset();
     if (browserDataFlushed) return;
     event.preventDefault();

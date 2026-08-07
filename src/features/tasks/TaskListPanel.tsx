@@ -16,6 +16,7 @@ import {
   Lock,
   Play,
   Plus,
+  Repeat,
   Flag,
   MessageCircleMore,
   NotebookPen,
@@ -79,19 +80,46 @@ import { taskTrackingSnapshot } from "@/lib/task-tracking";
 import { TaskFlow } from "@/features/graph/TaskFlow";
 import { StatsPanel } from "@/features/stats/StatsPanel";
 import { MatrixPanel } from "@/features/matrix/MatrixPanel";
+import { HomePanel } from "@/features/home/HomePanel";
+import { describeSchedule, scheduleStatus, taskSchedule } from "@/lib/task-schedule";
 
 export function polishNotesWithToast(taskId: string) {
   useAppStore.getState().setAiDialog({ type: "polish", taskId });
 }
 
-function fmtDue(due: string): { text: string; overdue: boolean } {
-  const d = new Date(due + "T00:00:00");
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return {
-    text: `${d.getMonth() + 1}/${d.getDate()}`,
-    overdue: d.getTime() < today.getTime(),
-  };
+/** 列表右缘的日期格：逾期和今天要一眼看见，其余只报个日子 */
+function DueCell({ task }: { task: Task }) {
+  const schedule = taskSchedule(task);
+  if (schedule.type === "none") return null;
+  const status = scheduleStatus(schedule);
+  const text =
+    status.state === "overdue"
+      ? `逾期${-status.days}`
+      : status.state === "today"
+        ? "今天"
+        : status.state === "tomorrow"
+          ? "明天"
+          : schedule.due.slice(5).replace("-", "/");
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className={cn(
+            "flex items-center justify-end gap-0.5 text-[11px] tabular-nums",
+            status.state === "overdue"
+              ? "font-medium text-destructive"
+              : status.state === "today"
+                ? "font-medium text-primary"
+                : "text-muted-foreground"
+          )}
+        >
+          {schedule.type === "recurring" && <Repeat className="size-2.5" />}
+          {text}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{describeSchedule(schedule)}</TooltipContent>
+    </Tooltip>
+  );
 }
 
 function StatusIcon({ task, blocked }: { task: Task; blocked: boolean }) {
@@ -135,7 +163,6 @@ function TaskRow({
   const blocked = isBlocked(task, byId);
   const done = task.status === "done";
   const dependents = dependentsOf(task.id, tasks).length;
-  const due = task.dueDate ? fmtDue(task.dueDate) : null;
   const tracking = taskTrackingSnapshot(task);
 
   const toggleDone = () => {
@@ -151,7 +178,10 @@ function TaskRow({
       toast.warning("前置任务未完成，暂不可完成");
       return;
     }
-    setStatus(task.id, done ? "todo" : "done");
+    const ok = setStatus(task.id, done ? "todo" : "done");
+    if (ok && !done && taskSchedule(task).type === "recurring") {
+      toast.success("已完成本轮，下次处理日已顺延");
+    }
   };
 
   const remove = () => {
@@ -292,19 +322,8 @@ function TaskRow({
             )}
           </span>
 
-          <span className="w-12 shrink-0 text-right">
-            {due && !done && (
-              <span
-                className={cn(
-                  "text-[11px] tabular-nums",
-                  due.overdue
-                    ? "font-medium text-primary"
-                    : "text-muted-foreground"
-                )}
-              >
-                {due.text}
-              </span>
-            )}
+          <span className="w-14 shrink-0 text-right">
+            {!done && <DueCell task={task} />}
           </span>
         </div>
       </ContextMenuTrigger>
@@ -740,7 +759,13 @@ export function TaskListPanel({ fixedView }: { fixedView?: ViewMode } = {}) {
 
   return (
     <main className="flex h-full min-w-0 flex-col bg-background">
-      <header className="flex items-center gap-3 px-4 pt-3 pb-2.5">
+      {/* 主页自带项目标题和进度，再来一条会重复 */}
+      <header
+        className={cn(
+          "flex items-center gap-3 px-4 pt-3 pb-2.5",
+          view === "home" && "hidden"
+        )}
+      >
         <span
           className="size-2.5 shrink-0 rounded-full"
           style={{ background: project.color }}
@@ -900,6 +925,8 @@ export function TaskListPanel({ fixedView }: { fixedView?: ViewMode } = {}) {
         </div>
       ) : view === "stats" ? (
         <StatsPanel tasks={projectTasks} byId={byId} />
+      ) : view === "home" ? (
+        <HomePanel tasks={projectTasks} project={project} />
       ) : (
         <MatrixPanel tasks={projectTasks} byId={byId} />
       )}

@@ -12,7 +12,7 @@ async function loadWith(loadState: () => Promise<string | null>) {
 }
 
 const validState = JSON.stringify({
-  version: 3,
+  version: 4,
   projects: [{ id: "p1", name: "脉络", color: "#000", createdAt: 1 }],
   tasks: [],
 });
@@ -27,7 +27,38 @@ describe("loadPersisted", () => {
     expect(result.kind).toBe("ok");
     if (result.kind === "ok") {
       expect(result.data.projects).toHaveLength(1);
-      expect(result.data.version).toBe(3);
+      expect(result.data.version).toBe(4);
+    }
+  });
+
+  it("migrates a legacy dueDate into a v4 one-time schedule", async () => {
+    const legacy = JSON.stringify({
+      version: 3,
+      projects: [{ id: "p1", name: "脉络", color: "#000", createdAt: 1 }],
+      tasks: [
+        {
+          id: "t1",
+          projectId: "p1",
+          title: "旧任务",
+          notes: "",
+          status: "todo",
+          priority: "normal",
+          dueDate: "2026-08-20",
+          tags: [],
+          deps: [],
+          createdAt: 1,
+          completedAt: null,
+          tracking: { type: "standard" },
+        },
+      ],
+    });
+    const result = await loadWith(async () => legacy);
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") {
+      expect(result.data.tasks[0]).toMatchObject({
+        dueDate: "2026-08-20",
+        schedule: { type: "once", start: null, due: "2026-08-20" },
+      });
     }
   });
 

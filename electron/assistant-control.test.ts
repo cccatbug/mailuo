@@ -37,6 +37,45 @@ describe("AssistantControl", () => {
     await expect(result).resolves.toBe(true);
   });
 
+  it("requests approval for task mutations but not task reads", async () => {
+    const control = new AssistantControl();
+    const events: AssistantEventPayload[] = [];
+    control.beginTurn((event) => events.push(event));
+
+    await expect(control.approveTool("task_list", {})).resolves.toBe(true);
+    expect(events).toEqual([]);
+
+    const result = control.approveTool("task_update", {
+      updates: [{ task: "t1", status: "done" }],
+    });
+    const event = events[0];
+    expect(event?.type).toBe("approval");
+    if (event?.type !== "approval") throw new Error("missing approval event");
+    expect(event.request).toMatchObject({
+      toolName: "task_update",
+      label: "修改任务",
+      reason: "mutation",
+    });
+
+    control.settleApproval({ id: event.request.id, allowed: true });
+    await expect(result).resolves.toBe(true);
+  });
+
+  it("only treats project_list as a mutation when it switches project", async () => {
+    const control = new AssistantControl();
+    const events: AssistantEventPayload[] = [];
+    control.beginTurn((event) => events.push(event));
+
+    await expect(control.approveTool("project_list", {})).resolves.toBe(true);
+    expect(events).toEqual([]);
+
+    const result = control.approveTool("project_list", { switchTo: "工作" });
+    const event = events[0];
+    if (event?.type !== "approval") throw new Error("missing approval event");
+    control.settleApproval({ id: event.request.id, allowed: false });
+    await expect(result).resolves.toBe(false);
+  });
+
   it("publishes a normalized Todo plan", async () => {
     const control = new AssistantControl();
     const events: AssistantEventPayload[] = [];

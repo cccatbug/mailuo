@@ -38,6 +38,7 @@ import type {
   MemorySnapshot,
   UpdateMemoryInput,
 } from "@/shared/memory";
+import type { TaskCommand } from "@/shared/task-commands";
 
 export interface BrowserSessionSnapshot {
   persistent: boolean;
@@ -189,6 +190,9 @@ export interface MailuoApi {
     handler: (
       command: BrowserTabCommand
     ) => Promise<{ tabId?: string }> | { tabId?: string }
+  ) => () => void;
+  onTaskCommand: (
+    handler: (command: TaskCommand) => Promise<unknown> | unknown
   ) => () => void;
   onBrowserApprovalRequest: (
     handler: (request: BrowserApprovalRequest) => void

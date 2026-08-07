@@ -1,8 +1,9 @@
 import dagre from "@dagrejs/dagre";
 import type { GraphDirection } from "@/store/useAppStore";
 
-export const NODE_W = 208;
-export const NODE_H = 100;
+export const NODE_W = 240;
+// 标题两行 + 标签 + 进度条的富卡片也要留足高度，避免同层节点重叠。
+export const NODE_H = 144;
 
 export interface LayoutInput {
   id: string;

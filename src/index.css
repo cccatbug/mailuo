@@ -581,8 +581,56 @@
   transition: background-color 120ms ease, color 120ms ease, opacity 120ms ease;
 }
 .dv-tab .dv-default-tab {
-  padding-inline: 8px;
+  gap: 6px;
+  padding-inline: 10px 6px;
   opacity: 1;
+}
+.dv-tab .dv-default-tab .dv-default-tab-content {
+  margin-right: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+ * 关闭按钮。
+ *
+ * dockview 默认给的是一块带 4px 内边距的方形热区，图标和文字之间没有留白，
+ * 鼠标一靠近就先命中它——「点了半天点不中标签页」就是这么来的。这里把它收成
+ * 一个固定 18px 的圆形按钮，和标题之间空出 6px，命中范围与视觉范围重合。
+ */
+.dv-tab .dv-default-tab .dv-default-tab-action {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 999px;
+  color: var(--muted-foreground);
+  transition: background-color 120ms ease, color 120ms ease, opacity 120ms ease;
+}
+.dv-tab .dv-default-tab .dv-default-tab-action svg {
+  width: 12px;
+  height: 12px;
+}
+.dv-tab .dv-default-tab .dv-default-tab-action:hover {
+  border-radius: 999px;
+  background-color: color-mix(in oklch, var(--destructive) 14%, transparent);
+  color: var(--destructive);
+}
+/* 未聚焦的标签页把关闭按钮留在原位但淡下去，避免悬停时标题左右跳动 */
+.dv-tab.dv-inactive-tab .dv-default-tab .dv-default-tab-action {
+  visibility: visible;
+  opacity: 0;
+}
+.dv-tab.dv-inactive-tab .dv-default-tab:hover .dv-default-tab-action,
+.dv-tab.dv-inactive-tab:focus-within .dv-default-tab .dv-default-tab-action {
+  opacity: 1;
+}
+@media (pointer: coarse) {
+  .dv-tab .dv-default-tab .dv-default-tab-action {
+    width: 24px;
+    height: 24px;
+    opacity: 1;
+  }
 }
 .dv-tabs-container[aria-orientation="horizontal"] > .dv-tab.dv-active-tab {
   position: relative;
@@ -615,18 +663,23 @@
   border-bottom-left-radius: 10px;
   box-shadow: -5px 0 0 var(--mailuo-active-tab-surface);
 }
+/* 标签页宽度：短标题不塌成一个字，长标题省略号收尾 */
+.dv-tabs-container[aria-orientation="horizontal"] > .dv-tab {
+  min-width: 84px;
+  max-width: 220px;
+}
 .dv-tab.dv-inactive-tab {
   margin-block: 5px 3px;
   border-radius: 8px;
-  opacity: 0.68;
 }
+/* 层级交给颜色而不是整体透明度——叠上 muted 前景色会糊成一片 */
 .dv-tab.dv-inactive-tab:hover {
   background: var(--accent) !important;
   color: var(--accent-foreground) !important;
-  opacity: 1;
 }
-.dv-groupview.dv-inactive-group > .dv-tabs-and-actions-container .dv-tab.dv-active-tab {
-  opacity: 0.82;
+.dv-tab:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
 }
 .dv-tabs-and-actions-container {
   border-bottom: 1px solid var(--border);

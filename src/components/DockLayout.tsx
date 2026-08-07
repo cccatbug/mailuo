@@ -14,6 +14,7 @@ import {
   ChartPie,
   Grid2x2,
   History,
+  Home,
   ListTree,
   Maximize,
   MoveHorizontal,
@@ -76,6 +77,7 @@ const LAYOUT_KEY = "mailuo-dock-v1";
 
 const components: Record<string, React.FunctionComponent<IDockviewPanelProps>> = {
   tasks: () => <TaskListPanel />,
+  "view-home": () => <TaskListPanel fixedView="home" />,
   "view-list": () => <TaskListPanel fixedView="list" />,
   "view-graph": () => <TaskListPanel fixedView="graph" />,
   "view-stats": () => <TaskListPanel fixedView="stats" />,
@@ -108,6 +110,7 @@ const components: Record<string, React.FunctionComponent<IDockviewPanelProps>> =
 };
 
 const VIEW_PANEL_TITLE: Record<ViewMode, string> = {
+  home: "主页",
   list: "列表",
   graph: "脉络图",
   stats: "统计",
@@ -240,6 +243,7 @@ export function openViewPanel(view: ViewMode) {
 /* ---------- 组头右侧工具（跟随活动面板） ---------- */
 
 const VIEW_TABS: { key: ViewMode; label: string; icon: React.ReactNode }[] = [
+  { key: "home", label: "主页", icon: <Home /> },
   { key: "list", label: "列表", icon: <SquareKanban /> },
   { key: "graph", label: "脉络图", icon: <ListTree /> },
   { key: "stats", label: "统计", icon: <ChartPie /> },

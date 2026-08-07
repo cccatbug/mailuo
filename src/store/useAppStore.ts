@@ -24,8 +24,14 @@ import {
   updateTaskTracking,
   type TaskTrackingAction,
 } from "@/lib/task-tracking";
+import {
+  applyDatePatch,
+  completeRecurring,
+  taskSchedule,
+} from "@/lib/task-schedule";
+import type { TaskSchedule } from "@/types";
 
-export type ViewMode = "list" | "graph" | "stats" | "matrix";
+export type ViewMode = "home" | "list" | "graph" | "stats" | "matrix";
 export type { Theme, ThemeMode, ThemePalette } from "@/lib/theme";
 export type Locale = "zh-CN" | "en";
 export type GraphDirection = "LR" | "TB";
@@ -175,6 +181,8 @@ interface AppStore {
   restoreTasks: (removed: RemovedTask[]) => void;
   duplicateTask: (id: string) => Task | null;
   setStatus: (id: string, status: Status) => boolean;
+  /** 设定日期安排（截止 / 定期）；dueDate 由它派生 */
+  setSchedule: (id: string, schedule: TaskSchedule) => void;
   trackTask: (id: string, action: TaskTrackingAction) => boolean;
   setPriority: (id: string, priority: Priority) => void;
   setQuadrant: (id: string, q: Quadrant) => void;
@@ -196,6 +204,24 @@ const SETTINGS_KEY = "mailuo-settings";
 const PANELS_KEY = "mailuo-panels";
 const GRAPH_POSITIONS_KEY = "mailuo-graph-positions";
 const COLLAPSED_GROUPS_KEY = "mailuo-collapsed-groups";
+
+/**
+ * 进度/打卡已经各自定义了完成条件，不能再叠加「完成后重开一轮」的日期语义。
+ * 发生类型切换或导入旧数据时，保留当前处理日为一次性期限，不丢日期。
+ */
+function ensureScheduleTrackingCompatibility(task: Task): Task {
+  const schedule = taskSchedule(task);
+  if (task.tracking.type === "standard" || schedule.type !== "recurring") {
+    return task;
+  }
+  return applyDatePatch(task, {
+    schedule: {
+      type: "once",
+      start: schedule.start,
+      due: schedule.due,
+    },
+  });
+}
 
 function loadCollapsedGroups(): string[] {
   try {
@@ -292,7 +318,7 @@ export const useAppStore = create<AppStore>((set, get) => {
     tagLibrary: [],
     selectedProjectId: null,
     selectedTaskId: null,
-    view: "list",
+    view: "home",
     theme: "light",
     themeMode: "system",
     themePalette: "paper",
@@ -356,7 +382,11 @@ export const useAppStore = create<AppStore>((set, get) => {
         themePalette: preference.palette,
         settings,
         projects: data.projects,
-        tasks: reconcileTrackedTaskStatuses(data.tasks),
+        tasks: reconcileTrackedTaskStatuses(
+          data.tasks.map((t) =>
+            ensureScheduleTrackingCompatibility(applyDatePatch(t))
+          )
+        ),
         tagLibrary,
         selectedProjectId: data.projects[0]?.id ?? null,
       });
@@ -435,10 +465,14 @@ export const useAppStore = create<AppStore>((set, get) => {
       commit({
         projects,
         tasks: reconcileTrackedTaskStatuses(
-          tasks.map((task) => ({
-            ...task,
-            tracking: normalizeTaskTracking(task.tracking),
-          }))
+          tasks.map((task) =>
+            ensureScheduleTrackingCompatibility(
+              applyDatePatch({
+                ...task,
+                tracking: normalizeTaskTracking(task.tracking),
+              })
+            )
+          )
         ),
         selectedProjectId: projects[0]?.id ?? null,
         selectedTaskId: null,
@@ -632,25 +666,49 @@ export const useAppStore = create<AppStore>((set, get) => {
         createdAt: Date.now(),
         completedAt: null,
         tracking: { type: "standard" },
+        schedule: { type: "none" },
         ...patch,
       };
       task.tracking = normalizeTaskTracking(task.tracking);
-      commit({ tasks: [...tasks, task], selectedTaskId: task.id });
-      return task;
+      const ready = ensureScheduleTrackingCompatibility(
+        applyDatePatch(task, {
+          schedule: patch?.schedule,
+          dueDate: patch?.schedule === undefined ? task.dueDate : undefined,
+        })
+      );
+      commit({ tasks: [...tasks, ready], selectedTaskId: ready.id });
+      return ready;
     },
 
     updateTask: (id, patch) => {
       const updated = get().tasks.map((t) =>
         t.id === id
-          ? {
-              ...t,
-              ...patch,
-              tracking: normalizeTaskTracking(patch.tracking ?? t.tracking),
-            }
+          ? ensureScheduleTrackingCompatibility(
+              applyDatePatch(
+                {
+                  ...t,
+                  ...patch,
+                  tracking: normalizeTaskTracking(patch.tracking ?? t.tracking),
+                },
+                patch
+              )
+            )
           : t
       );
       commit({
         tasks: reconcileTrackedTaskStatuses(updated),
+      });
+    },
+
+    setSchedule: (id, schedule) => {
+      commit({
+        tasks: get().tasks.map((t) =>
+          t.id === id
+            ? ensureScheduleTrackingCompatibility(
+                applyDatePatch(t, { schedule })
+              )
+            : t
+        ),
       });
     },
 
@@ -767,6 +825,7 @@ export const useAppStore = create<AppStore>((set, get) => {
       const { tasks } = get();
       const src = tasks.find((t) => t.id === id);
       if (!src) return null;
+      const schedule = taskSchedule(src);
       const copy: Task = {
         ...src,
         id: uid(),
@@ -774,6 +833,11 @@ export const useAppStore = create<AppStore>((set, get) => {
         status: "todo",
         createdAt: Date.now(),
         completedAt: null,
+        // 副本从零开始：重复轮次不该跟着复制过来
+        schedule:
+          schedule.type === "recurring"
+            ? { ...schedule, doneCount: 0, lastDone: null }
+            : schedule,
         tracking:
           src.tracking.type === "progress"
             ? { ...src.tracking, current: 0 }
@@ -793,15 +857,18 @@ export const useAppStore = create<AppStore>((set, get) => {
       if (task.tracking.type !== "standard") return false;
       // 受阻任务不可直接完成
       if (status === "done" && isBlocked(task, byId)) return false;
+      // 定期任务「完成」的含义是完成本轮：滚到下一次处理日，而不是就此结项
+      const rolled =
+        status === "done" ? completeRecurring(task) : null;
       commit({
         tasks: reconcileTrackedTaskStatuses(
           tasks.map((t) =>
             t.id === id
-              ? {
+              ? (rolled ?? {
                   ...t,
                   status,
                   completedAt: status === "done" ? Date.now() : null,
-                }
+                })
               : t
           )
         ),
@@ -812,9 +879,12 @@ export const useAppStore = create<AppStore>((set, get) => {
     trackTask: (id, action) => {
       const tasks = get().tasks;
       if (!tasks.some((task) => task.id === id)) return false;
-      const updated = tasks.map((task) =>
-        task.id === id ? updateTaskTracking(task, action) : task
-      );
+      const updated = tasks.map((task) => {
+        if (task.id !== id) return task;
+        return ensureScheduleTrackingCompatibility(
+          updateTaskTracking(task, action)
+        );
+      });
       commit({ tasks: reconcileTrackedTaskStatuses(updated) });
       return true;
     },

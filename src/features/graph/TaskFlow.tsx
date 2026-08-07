@@ -22,6 +22,7 @@ import {
   ArrowLeft,
   CalendarCheck2,
   Check,
+  CopyPlus,
   Focus,
   Gauge,
   LayoutGrid,
@@ -33,6 +34,7 @@ import {
   RotateCcw,
   SquareSplitVertical,
   Trash2,
+  Waypoints,
   X,
   XCircle,
 } from "lucide-react";
@@ -41,7 +43,10 @@ import { Button } from "@/components/ui/button";
 import { polishNotesWithToast } from "@/features/tasks/TaskListPanel";
 import { useAppStore, type NodePosition, type StatusFilter } from "@/store/useAppStore";
 import { dependencyChainOf, isBlocked, wouldCreateCycle } from "@/lib/deps";
-import type { Task } from "@/types";
+import { isSubmitKey } from "@/lib/keyboard";
+import { addDaysISO, taskSchedule, todayISO } from "@/lib/task-schedule";
+import type { Priority, Task } from "@/types";
+import { PRIORITY_LABEL } from "@/types";
 import { TaskNode, type TaskNodeType } from "./TaskNode";
 import { assignTaskColorSlots } from "./node-colors";
 import { layoutWithDagre, NODE_H, NODE_W } from "./layout";
@@ -78,6 +83,8 @@ function applyFilter(
 interface EditHandlers {
   done: (id: string, title: string) => void;
   cancel: () => void;
+  complete: (id: string) => void;
+  addNext: (id: string) => void;
 }
 
 function buildGraph(
@@ -91,6 +98,13 @@ function buildGraph(
   editHandlers: EditHandlers
 ): { nodes: TaskNodeType[]; edges: Edge[] } {
   const byId = new Map(tasks.map((t) => [t.id, t]));
+  // 后续任务数：整张图算一次，别让每个节点各自扫一遍全表
+  const dependentCount = new Map<string, number>();
+  for (const task of tasks) {
+    for (const dep of task.deps) {
+      dependentCount.set(dep, (dependentCount.get(dep) ?? 0) + 1);
+    }
+  }
   // 聚焦模式：只看聚焦任务的完整链路
   const focusChain = focusTaskId ? dependencyChainOf(focusTaskId, byId) : null;
   const visible = applyFilter(tasks, filter, byId).filter(
@@ -120,10 +134,13 @@ function buildGraph(
       blocked: isBlocked(t, byId),
       direction,
       colorSlot: colorSlots.get(t.id) ?? 0,
+      dependents: dependentCount.get(t.id) ?? 0,
       dimmed: highlight !== null && !highlight.has(t.id),
       editing: editingId === t.id,
       onEditDone: (title: string) => editHandlers.done(t.id, title),
       onEditCancel: editHandlers.cancel,
+      onComplete: () => editHandlers.complete(t.id),
+      onAddNext: () => editHandlers.addNext(t.id),
     },
   }));
 
@@ -190,6 +207,134 @@ function MenuButton({
   );
 }
 
+/**
+ * 多选后的批量编辑条。
+ *
+ * 脉络图上真正费时的不是改一个任务，而是把一整串任务的优先级、期限、标签调成
+ * 一致——所以这些字段直接摊在条上，不藏进二级菜单。
+ */
+function BatchBar({
+  count,
+  onComplete,
+  onDelete,
+  onPriority,
+  onDue,
+  onTag,
+  onSelectChain,
+  onChain,
+  onClear,
+}: {
+  count: number;
+  onComplete: () => void;
+  onDelete: () => void;
+  onPriority: (priority: Priority) => void;
+  onDue: (offset: number | null) => void;
+  onTag: (tag: string) => void;
+  onSelectChain: () => void;
+  onChain: () => void;
+  onClear: () => void;
+}) {
+  const tagLibrary = useAppStore((s) => s.tagLibrary);
+  const [tagDraft, setTagDraft] = useState("");
+  const [panel, setPanel] = useState<"priority" | "due" | "tag" | null>(null);
+
+  const toggle = (next: typeof panel) =>
+    setPanel((current) => (current === next ? null : next));
+
+  const Chip = ({
+    active,
+    children,
+    onClick,
+  }: {
+    active?: boolean;
+    children: React.ReactNode;
+    onClick: () => void;
+  }) => (
+    <button
+      className={cn(
+        "rounded-full px-2 py-0.5 transition-colors",
+        active
+          ? "bg-accent font-medium text-accent-foreground"
+          : "hover:bg-accent hover:text-foreground"
+      )}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  );
+
+  return (
+    <div className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 flex-col items-center gap-1">
+      {panel === "priority" && (
+        <div className="flex items-center gap-0.5 rounded-full border bg-card/95 px-2 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur">
+          {(["high", "normal", "low"] as Priority[]).map((priority) => (
+            <Chip key={priority} onClick={() => onPriority(priority)}>
+              {PRIORITY_LABEL[priority]}
+            </Chip>
+          ))}
+        </div>
+      )}
+      {panel === "due" && (
+        <div className="flex items-center gap-0.5 rounded-full border bg-card/95 px-2 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur">
+          <Chip onClick={() => onDue(0)}>今天</Chip>
+          <Chip onClick={() => onDue(1)}>明天</Chip>
+          <Chip onClick={() => onDue(7)}>下周</Chip>
+          <Chip onClick={() => onDue(30)}>下个月</Chip>
+          <Chip onClick={() => onDue(null)}>清除</Chip>
+        </div>
+      )}
+      {panel === "tag" && (
+        <div className="flex max-w-md flex-wrap items-center gap-1 rounded-2xl border bg-card/95 px-2 py-1.5 text-xs text-muted-foreground shadow-sm backdrop-blur">
+          <input
+            value={tagDraft}
+            placeholder="新标签，回车添加"
+            className="h-6 w-32 rounded-full border border-dashed bg-transparent px-2 text-xs outline-none focus:border-primary"
+            onChange={(event) => setTagDraft(event.target.value)}
+            onKeyDown={(event) => {
+              event.stopPropagation();
+              if (isSubmitKey(event, { allowShift: true }) && tagDraft.trim()) {
+                onTag(tagDraft);
+                setTagDraft("");
+              }
+            }}
+          />
+          {tagLibrary.slice(0, 10).map((tag) => (
+            <Chip key={tag} onClick={() => onTag(tag)}>
+              ＋{tag}
+            </Chip>
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-center gap-0.5 rounded-full border bg-card/95 px-2 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur">
+        <span className="px-1.5 tabular-nums">已选 {count} 项</span>
+        <span className="mx-0.5 h-3 w-px bg-border" />
+        <Chip onClick={onComplete}>完成</Chip>
+        <Chip active={panel === "priority"} onClick={() => toggle("priority")}>
+          优先级
+        </Chip>
+        <Chip active={panel === "due"} onClick={() => toggle("due")}>
+          期限
+        </Chip>
+        <Chip active={panel === "tag"} onClick={() => toggle("tag")}>
+          标签
+        </Chip>
+        <span className="mx-0.5 h-3 w-px bg-border" />
+        <Chip onClick={onSelectChain}>选整条脉络</Chip>
+        <Chip onClick={onChain}>串成一条链</Chip>
+        <span className="mx-0.5 h-3 w-px bg-border" />
+        <button
+          className="rounded-full px-2 py-0.5 text-destructive transition-colors hover:bg-destructive/10"
+          onClick={onDelete}
+        >
+          删除
+        </button>
+        <Chip onClick={onClear}>取消选择</Chip>
+      </div>
+    </div>
+  );
+}
+
 function Flow({ tasks, wrapRef }: { tasks: Task[]; wrapRef: React.RefObject<HTMLDivElement | null> }) {
   const selectedTaskId = useAppStore((s) => s.selectedTaskId);
   const selectTask = useAppStore((s) => s.selectTask);
@@ -216,9 +361,56 @@ function Flow({ tasks, wrapRef }: { tasks: Task[]; wrapRef: React.RefObject<HTML
     setEditingId(null);
   }, []);
   const onEditCancel = useCallback(() => setEditingId(null), []);
+
+  /** 卡片上的「完成」按钮：三种任务类型各有各的完成方式 */
+  const onQuickComplete = useCallback((id: string) => {
+    const store = useAppStore.getState();
+    const task = store.tasks.find((candidate) => candidate.id === id);
+    if (!task) return;
+    if (task.tracking.type === "checkin") {
+      store.trackTask(id, { type: "toggle-checkin" });
+      return;
+    }
+    if (task.tracking.type === "progress") {
+      store.selectTask(id);
+      toast.info("在右侧详情里调整进度");
+      return;
+    }
+    if (task.status === "done") {
+      store.setStatus(id, "todo");
+      return;
+    }
+    if (!store.setStatus(id, "done")) {
+      toast.warning("前置任务未完成，暂不可完成");
+    } else if (taskSchedule(task).type === "recurring") {
+      toast.success("已完成本轮，下次处理日已顺延");
+    }
+  }, []);
+
+  /**
+   * 从一个节点长出下一环。
+   *
+   * 「快速编织一整条脉络」靠的就是它：建任务、连依赖、进入改名，一次点击接一环。
+   */
+  const onAddNext = useCallback((id: string) => {
+    const store = useAppStore.getState();
+    const source = store.tasks.find((candidate) => candidate.id === id);
+    if (!source) return;
+    if (store.graphFocusTaskId) store.setGraphFocus(null);
+    const task = store.addTask("新任务", { priority: source.priority });
+    if (!task) return;
+    store.addDep(task.id, id);
+    setEditingId(task.id);
+  }, []);
+
   const editHandlers = useMemo(
-    () => ({ done: onEditDone, cancel: onEditCancel }),
-    [onEditDone, onEditCancel]
+    () => ({
+      done: onEditDone,
+      cancel: onEditCancel,
+      complete: onQuickComplete,
+      addNext: onAddNext,
+    }),
+    [onEditDone, onEditCancel, onQuickComplete, onAddNext]
   );
 
   const graph = useMemo(
@@ -442,6 +634,84 @@ function Flow({ tasks, wrapRef }: { tasks: Task[]; wrapRef: React.RefObject<HTML
     });
   }, [selectedIds]);
 
+  const batchPriority = useCallback(
+    (priority: Priority) => {
+      const store = useAppStore.getState();
+      selectedIds.forEach((id) => store.setPriority(id, priority));
+      toast.success(`已把 ${selectedIds.length} 项设为「${PRIORITY_LABEL[priority]}」`);
+    },
+    [selectedIds]
+  );
+
+  const batchDue = useCallback(
+    (offset: number | null) => {
+      const store = useAppStore.getState();
+      const due = offset === null ? null : addDaysISO(todayISO(), offset);
+      selectedIds.forEach((id) => store.updateTask(id, { dueDate: due }));
+      toast.success(
+        due
+          ? `已把 ${selectedIds.length} 项的期限设为 ${due.slice(5).replace("-", "/")}`
+          : `已清除 ${selectedIds.length} 项的期限`
+      );
+    },
+    [selectedIds]
+  );
+
+  const batchTag = useCallback(
+    (tag: string) => {
+      const trimmed = tag.trim();
+      if (!trimmed) return;
+      const store = useAppStore.getState();
+      selectedIds.forEach((id) => store.addTag(id, trimmed));
+      toast.success(`已给 ${selectedIds.length} 项加上「${trimmed}」`);
+    },
+    [selectedIds]
+  );
+
+  /** 把当前选中扩展成完整依赖链路：编辑一整条脉络前先一次选齐 */
+  const selectChain = useCallback(() => {
+    const seeds = selectedIds.length > 0 ? selectedIds : selectedTaskId ? [selectedTaskId] : [];
+    if (seeds.length === 0) return;
+    const chain = new Set<string>();
+    for (const id of seeds) {
+      for (const member of dependencyChainOf(id, byId)) chain.add(member);
+    }
+    const ids = [...chain];
+    setSelectedIds(ids);
+    const chainSet = new Set(ids);
+    setNodes((nds) => nds.map((n) => ({ ...n, selected: chainSet.has(n.id) })));
+    toast.success(`已选中整条脉络，共 ${ids.length} 项`);
+  }, [selectedIds, selectedTaskId, byId, setNodes]);
+
+  /** 串成一条链：按当前选中顺序依次建立依赖 */
+  const chainSelected = useCallback(() => {
+    const store = useAppStore.getState();
+    // 选中顺序不可靠，按图上的排布顺序串才符合直觉
+    const selected = new Set(selectedIds);
+    const ordered = [...graph.nodes]
+      .filter((node) => selected.has(node.id))
+      .sort((a, b) =>
+        direction === "LR"
+          ? a.position.x - b.position.x || a.position.y - b.position.y
+          : a.position.y - b.position.y || a.position.x - b.position.x
+      )
+      .map((node) => node.id);
+    let linked = 0;
+    let refused = 0;
+    for (let index = 1; index < ordered.length; index += 1) {
+      const result = store.addDep(ordered[index], ordered[index - 1]);
+      if (result === "ok") linked += 1;
+      else if (result === "cycle") refused += 1;
+    }
+    if (linked === 0) {
+      toast.info(refused > 0 ? "无法串联：会形成循环" : "这些任务已经串好了");
+      return;
+    }
+    toast.success(
+      `已串联 ${linked} 条依赖${refused > 0 ? `，${refused} 条会成环已跳过` : ""}`
+    );
+  }, [graph.nodes, selectedIds, direction]);
+
   // 键盘导航：方向键 / Tab 在节点间移动选中
   const visibleOrder = useMemo(() => graph.nodes.map((n) => n.id), [graph.nodes]);
   const onFlowKeyDown = useCallback(
@@ -449,6 +719,41 @@ function Flow({ tasks, wrapRef }: { tasks: Task[]; wrapRef: React.RefObject<HTML
       if (menu || editingId) return;
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
+      // 单键快捷编辑：手不用离开图就能接链、改名、完成、选整条脉络
+      if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+        const key = e.key.toLowerCase();
+        if (key === "n" && selectedTaskId) {
+          e.preventDefault();
+          onAddNext(selectedTaskId);
+          return;
+        }
+        if (key === "e" && selectedTaskId) {
+          e.preventDefault();
+          setEditingId(selectedTaskId);
+          return;
+        }
+        if (key === "c" && (selectedTaskId || selectedIds.length > 0)) {
+          e.preventDefault();
+          selectChain();
+          return;
+        }
+        if (e.key === " " && selectedTaskId) {
+          e.preventDefault();
+          onQuickComplete(selectedTaskId);
+          return;
+        }
+        if (key === "f" && selectedTaskId) {
+          e.preventDefault();
+          useAppStore.getState().setGraphFocus(selectedTaskId);
+          setTimeout(() => fitView({ padding: 0.15, duration: 300 }), 60);
+          return;
+        }
+        if (e.key === "Escape" && focusTaskId) {
+          e.preventDefault();
+          useAppStore.getState().setGraphFocus(null);
+          return;
+        }
+      }
       if (!["ArrowRight", "ArrowLeft", "ArrowUp", "ArrowDown", "Tab"].includes(e.key))
         return;
       const ids = visibleOrder;
@@ -479,7 +784,23 @@ function Flow({ tasks, wrapRef }: { tasks: Task[]; wrapRef: React.RefObject<HTML
         }
       }
     },
-    [menu, editingId, visibleOrder, selectedTaskId, selectTask, graph.nodes, setCenter, getViewport]
+    [
+      menu,
+      editingId,
+      visibleOrder,
+      selectedTaskId,
+      selectedIds,
+      selectTask,
+      graph.nodes,
+      setCenter,
+      getViewport,
+      wrapRef,
+      onAddNext,
+      onQuickComplete,
+      selectChain,
+      fitView,
+      focusTaskId,
+    ]
   );
 
   const focusTask = focusTaskId ? byId.get(focusTaskId) : null;
@@ -622,38 +943,29 @@ function Flow({ tasks, wrapRef }: { tasks: Task[]; wrapRef: React.RefObject<HTML
         </div>
       )}
 
-      {/* 批量操作条（多选时） */}
+      {/* 批量编辑条（多选时）——一次改一整条脉络 */}
       {selectedIds.length > 1 && (
-        <div className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-0.5 rounded-full border bg-card/80 px-2 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur">
-          <span className="px-1.5">已选 {selectedIds.length} 项</span>
-          <button
-            className="rounded-full px-2 py-0.5 hover:bg-accent hover:text-foreground"
-            onClick={batchComplete}
-          >
-            标记完成
-          </button>
-          <button
-            className="rounded-full px-2 py-0.5 text-destructive hover:bg-destructive/10"
-            onClick={batchDelete}
-          >
-            删除
-          </button>
-          <button
-            className="rounded-full px-2 py-0.5 hover:bg-accent hover:text-foreground"
-            onClick={() => useAppStore.getState().selectTask(null)}
-          >
-            清除选择
-          </button>
-        </div>
+        <BatchBar
+          count={selectedIds.length}
+          onComplete={batchComplete}
+          onDelete={batchDelete}
+          onPriority={batchPriority}
+          onDue={batchDue}
+          onTag={batchTag}
+          onSelectChain={selectChain}
+          onChain={chainSelected}
+          onClear={() => {
+            setSelectedIds([]);
+            setNodes((nds) => nds.map((n) => ({ ...n, selected: false })));
+          }}
+        />
       )}
 
       {/* 操作提示 */}
       {tasks.length > 0 && selectedIds.length <= 1 && (
         <div className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full border bg-card/80 px-3 py-1 text-xs text-muted-foreground backdrop-blur">
-          {direction === "LR"
-            ? "从节点右侧拖出连线以建立依赖"
-            : "从节点底部拖出连线以建立依赖"}
-          {" · "}双击节点改名 · 选中连线按 ⌫ 移除 · Shift 拖拽多选
+          {direction === "LR" ? "右侧拖出连线建依赖" : "底部拖出连线建依赖"}
+          {" · "}双击改名 · N 接下一环 · C 选整条脉络 · Shift 拖拽多选
         </div>
       )}
 
@@ -709,7 +1021,7 @@ function Flow({ tasks, wrapRef }: { tasks: Task[]; wrapRef: React.RefObject<HTML
                         label="标记完成"
                         disabled={blocked}
                         onClick={() => {
-                          s.setStatus(task.id, "done");
+                          onQuickComplete(task.id);
                           close();
                         }}
                       />
@@ -749,6 +1061,41 @@ function Flow({ tasks, wrapRef }: { tasks: Task[]; wrapRef: React.RefObject<HTML
                     )}
                     <div className="my-1 h-px bg-border" />
                     <MenuButton
+                      icon={Plus}
+                      label="接一个后继任务（N）"
+                      onClick={() => {
+                        onAddNext(task.id);
+                        close();
+                      }}
+                    />
+                    <MenuButton
+                      icon={NotebookPen}
+                      label="重命名（E）"
+                      onClick={() => {
+                        setEditingId(task.id);
+                        close();
+                      }}
+                    />
+                    <MenuButton
+                      icon={CopyPlus}
+                      label="复制任务"
+                      onClick={() => {
+                        const copy = s.duplicateTask(task.id);
+                        if (copy) toast.success("已创建副本");
+                        close();
+                      }}
+                    />
+                    <MenuButton
+                      icon={Waypoints}
+                      label="选中整条脉络（C）"
+                      onClick={() => {
+                        s.selectTask(task.id);
+                        setTimeout(selectChain, 0);
+                        close();
+                      }}
+                    />
+                    <div className="my-1 h-px bg-border" />
+                    <MenuButton
                       icon={SquareSplitVertical}
                       label="AI 拆解为子任务"
                       onClick={() => {
@@ -774,7 +1121,7 @@ function Flow({ tasks, wrapRef }: { tasks: Task[]; wrapRef: React.RefObject<HTML
                     />
                     <MenuButton
                       icon={Focus}
-                      label="聚焦此任务链路"
+                      label="聚焦此任务链路（F）"
                       onClick={() => {
                         s.setGraphFocus(task.id);
                         close();
@@ -867,6 +1214,35 @@ function Flow({ tasks, wrapRef }: { tasks: Task[]; wrapRef: React.RefObject<HTML
                         close();
                       }}
                     />
+                    <MenuButton
+                      icon={Waypoints}
+                      label="全选"
+                      onClick={() => {
+                        const ids = graph.nodes.map((node) => node.id);
+                        setSelectedIds(ids);
+                        setNodes((nds) =>
+                          nds.map((node) => ({ ...node, selected: true }))
+                        );
+                        close();
+                      }}
+                    />
+                    <MenuButton
+                      icon={LayoutGrid}
+                      label="重新自动排布"
+                      onClick={() => {
+                        // 清掉手工位置，交回 dagre 重新分层
+                        s.setGraphNodePositions({});
+                        localStorage.setItem("mailuo-graph-positions", "{}");
+                        useAppStore.setState({ graphNodePositions: {} });
+                        setTimeout(
+                          () => fitView({ padding: 0.15, duration: 300 }),
+                          60
+                        );
+                        toast.success("已恢复自动排布");
+                        close();
+                      }}
+                    />
+                    <div className="my-1 h-px bg-border" />
                     <MenuButton
                       icon={ListPlus}
                       label="AI 依赖建议"

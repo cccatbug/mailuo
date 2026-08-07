@@ -234,7 +234,7 @@ function DataPane() {
   const exportJson = async () => {
     const { projects, tasks, tagLibrary } = useAppStore.getState();
     const json = JSON.stringify(
-      { version: 3, projects, tasks, tagLibrary },
+      { version: 4, projects, tasks, tagLibrary },
       null,
       2
     );

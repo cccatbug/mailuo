@@ -1,5 +1,13 @@
-import type { PersistedData, Priority, Project, Status, Task } from "@/types";
+import type {
+  PersistedData,
+  Priority,
+  Project,
+  RecurrenceRule,
+  Status,
+  Task,
+} from "@/types";
 import { PROJECT_COLORS } from "@/types";
+import { toISODate } from "@/lib/task-schedule";
 
 const uid = () => crypto.randomUUID();
 
@@ -38,18 +46,45 @@ export function seedData(): PersistedData {
     createdAt: Date.now() - 86400000 * 5 + seq++ * 3600000,
     completedAt: status === "done" ? Date.now() - 3600000 * seq : null,
     tracking: { type: "standard" },
+    schedule: { type: "none" },
+  });
+
+  const day = (offset: number) => toISODate(new Date(Date.now() + offset * 86400000));
+  /** 截止日期 */
+  const due = (task: Task, offset: number): Task => ({
+    ...task,
+    dueDate: day(offset),
+    schedule: { type: "once", start: null, due: day(offset) },
+  });
+  /** 定期处理 */
+  const every = (task: Task, rule: RecurrenceRule, offset = 0): Task => ({
+    ...task,
+    dueDate: day(offset),
+    schedule: {
+      type: "recurring",
+      start: day(offset),
+      due: day(offset),
+      rule,
+      doneCount: 0,
+      lastDone: null,
+      until: null,
+    },
   });
 
   const t1 = mk("旧站内容盘点", "done", [], "normal", p1.id, ["内容"]);
   const t2 = mk("视觉风格定稿", "done", [], "high", p1.id, ["设计"]);
   const t3 = mk("信息架构设计", "doing", [t1], "high", p1.id, ["设计"]);
-  const t4 = mk("首页视觉设计", "todo", [t2, t3], "normal", p1.id, ["设计"]);
+  const t4 = due(mk("首页视觉设计", "todo", [t2, t3], "normal", p1.id, ["设计"]), 2);
   const t5 = mk("前端开发", "todo", [t4], "high", p1.id, ["研发"]);
-  const t6 = mk("全站文案撰写", "doing", [t3], "normal", p1.id, ["内容"]);
+  const t6 = due(mk("全站文案撰写", "doing", [t3], "normal", p1.id, ["内容"]), -1);
   const t7 = mk("SEO 迁移方案", "todo", [t3], "low", p1.id, ["增长"]);
   const t8 = mk("内容录入与排版", "todo", [t5, t6], "normal", p1.id, ["内容"]);
   const t9 = mk("全站测试", "todo", [t7, t8], "high", p1.id, ["研发"]);
-  const t10 = mk("正式上线", "todo", [t9], "high", p1.id);
+  const t10 = due(mk("正式上线", "todo", [t9], "high", p1.id), 14);
+  const t11 = every(
+    mk("站点数据周报", "todo", [], "normal", p1.id, ["增长"]),
+    { unit: "week", interval: 1, weekdays: [1], monthDay: 0 }
+  );
 
   const r1 = {
     ...mk("读完《置身事内》", "doing", [], "normal", p2.id, ["阅读"]),
@@ -66,9 +101,14 @@ export function seedData(): PersistedData {
     } as const,
   };
 
+  const r4 = every(
+    mk("隔天跑步", "todo", [], "normal", p2.id, ["健康"]),
+    { unit: "day", interval: 2, weekdays: [], monthDay: 0 }
+  );
+
   return {
-    version: 3,
+    version: 4,
     projects: [p1, p2],
-    tasks: [t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, r1, r2, r3],
+    tasks: [t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, r1, r2, r3, r4],
   };
 }

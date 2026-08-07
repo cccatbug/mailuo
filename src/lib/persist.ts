@@ -1,23 +1,32 @@
 import type { PersistedData, Task } from "@/types";
 import { bridge } from "./bridge";
 import { normalizeTaskTracking } from "./task-tracking";
+import { effectiveDue, normalizeTaskSchedule } from "./task-schedule";
 
 const LS_KEY = "mailuo-data";
 
-/** 旧版本数据结构补齐（v2 → v3 增加任务追踪类型） */
+/**
+ * 旧版本数据结构补齐。
+ * v2 → v3 增加任务追踪类型；v3 → v4 增加日期安排（由 dueDate 迁移）。
+ */
 function migrate(raw: unknown): PersistedData | null {
   if (raw === null || typeof raw !== "object") return null;
   const data = raw as { projects?: unknown; tasks?: unknown };
   if (!Array.isArray(data.projects) || !Array.isArray(data.tasks)) return null;
   const lib = (raw as { tagLibrary?: unknown }).tagLibrary;
   return {
-    version: 3,
+    version: 4,
     projects: data.projects,
-    tasks: (data.tasks as Task[]).map((t) => ({
-      ...t,
-      tags: t.tags ?? [],
-      tracking: normalizeTaskTracking(t.tracking),
-    })),
+    tasks: (data.tasks as Task[]).map((t) => {
+      const schedule = normalizeTaskSchedule(t.schedule, t.dueDate);
+      return {
+        ...t,
+        tags: t.tags ?? [],
+        tracking: normalizeTaskTracking(t.tracking),
+        schedule,
+        dueDate: effectiveDue(schedule),
+      };
+    }),
     tagLibrary: Array.isArray(lib) ? (lib as string[]) : undefined,
   };
 }
@@ -75,6 +84,34 @@ export function setPersistErrorHandler(handler: (message: string) => void) {
   onSaveError = handler;
 }
 
+/* ---------- 保存状态广播（状态栏订阅） ---------- */
+
+export type PersistState = "idle" | "dirty" | "saving" | "error";
+
+let persistState: PersistState = "idle";
+let savedAt: number | null = null;
+const stateListeners = new Set<() => void>();
+
+function setPersistState(next: PersistState) {
+  if (persistState === next) return;
+  persistState = next;
+  for (const listener of stateListeners) listener();
+}
+
+/** useSyncExternalStore 用：订阅保存状态变化 */
+export function subscribePersistState(listener: () => void): () => void {
+  stateListeners.add(listener);
+  return () => stateListeners.delete(listener);
+}
+
+export function getPersistState(): PersistState {
+  return persistState;
+}
+
+export function getLastSavedAt(): number | null {
+  return savedAt;
+}
+
 async function writeNow(data: PersistedData): Promise<void> {
   const json = JSON.stringify(data);
   if (bridge) await bridge.saveState(json);
@@ -82,7 +119,8 @@ async function writeNow(data: PersistedData): Promise<void> {
 }
 
 export function schedulePersist(data: Omit<PersistedData, "version">) {
-  pending = { version: 3, ...data } satisfies PersistedData;
+  pending = { version: 4, ...data } satisfies PersistedData;
+  setPersistState("dirty");
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     void flushPersist();
@@ -94,13 +132,21 @@ export async function flushPersist(): Promise<void> {
   const snapshot = pending;
   if (!snapshot) return;
   clearTimeout(saveTimer);
+  setPersistState("saving");
   try {
     await writeNow(snapshot);
     // 期间又有新改动的话，保留它等下一轮；否则清空 dirty 标记
-    if (pending === snapshot) pending = null;
+    if (pending === snapshot) {
+      pending = null;
+      savedAt = Date.now();
+      setPersistState("idle");
+    } else {
+      setPersistState("dirty");
+    }
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     console.error("保存数据失败", e);
+    setPersistState("error");
     onSaveError?.(message);
   }
 }

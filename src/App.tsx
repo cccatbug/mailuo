@@ -3,8 +3,10 @@ import { FolderOpen, Minus, RotateCcw, Square, TriangleAlert, X } from "lucide-r
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { useAppStore } from "@/store/useAppStore";
+import { useAppStore, type ViewMode } from "@/store/useAppStore";
 import { Ribbon } from "@/components/Ribbon";
+import { StatusBar } from "@/components/StatusBar";
+import { runTaskCommand } from "@/features/ai/taskCommands";
 import {
   DockLayout,
   ensureWorkspace,
@@ -56,21 +58,21 @@ function WindowControls() {
   );
 }
 
+const VIEW_LABEL: Record<ViewMode, string> = {
+  home: "主页",
+  list: "列表",
+  graph: "脉络图",
+  stats: "统计",
+  matrix: "四象限",
+};
+
 /** 顶部细条：窗口拖动区 + 居中标题（红绿灯 / 窗口控制在两端） */
 function TopStrip() {
   const projects = useAppStore((s) => s.projects);
   const selectedProjectId = useAppStore((s) => s.selectedProjectId);
   const view = useAppStore((s) => s.view);
   const project = projects.find((p) => p.id === selectedProjectId);
-  const viewLabel =
-    view === "list"
-      ? "列表"
-      : view === "graph"
-        ? "脉络图"
-        : view === "stats"
-          ? "统计"
-          : "四象限";
-  const title = project ? `${project.name} · ${viewLabel}` : "脉络";
+  const title = project ? `${project.name} · ${VIEW_LABEL[view]}` : "脉络";
 
   return (
     <header
@@ -228,22 +230,19 @@ export default function App() {
     []
   );
 
+  useEffect(
+    () => bridge?.onTaskCommand((command) => runTaskCommand(command)),
+    []
+  );
+
   // 原生窗口标题跟随当前项目与视图
   const projects = useAppStore((s) => s.projects);
   const selectedProjectId = useAppStore((s) => s.selectedProjectId);
   const view = useAppStore((s) => s.view);
   useEffect(() => {
     const project = projects.find((p) => p.id === selectedProjectId);
-    const viewLabel =
-      view === "list"
-        ? "列表"
-        : view === "graph"
-          ? "脉络图"
-          : view === "stats"
-            ? "统计"
-            : "四象限";
     document.title = project
-      ? `${project.name} · ${viewLabel} — 脉络`
+      ? `${project.name} · ${VIEW_LABEL[view]} — 脉络`
       : "脉络 · Màiluò";
   }, [projects, selectedProjectId, view]);
 
@@ -259,22 +258,12 @@ export default function App() {
       if (e.key === "k") {
         e.preventDefault();
         setCommandOpen(!useAppStore.getState().commandOpen);
-      } else if (e.key === "1") {
+      } else if (e.key >= "1" && e.key <= "5") {
         e.preventDefault();
         ensureWorkspace();
-        setView("list");
-      } else if (e.key === "2") {
-        e.preventDefault();
-        ensureWorkspace();
-        setView("graph");
-      } else if (e.key === "3") {
-        e.preventDefault();
-        ensureWorkspace();
-        setView("stats");
-      } else if (e.key === "4") {
-        e.preventDefault();
-        ensureWorkspace();
-        setView("matrix");
+        setView((["home", "list", "graph", "stats", "matrix"] as const)[
+          Number(e.key) - 1
+        ]);
       } else if (e.key === ",") {
         e.preventDefault();
         setSettingsOpen(true);
@@ -320,6 +309,7 @@ export default function App() {
             <DockLayout />
           </div>
         </div>
+        <StatusBar />
       </div>
       <CommandPalette />
       <SettingsDialog />

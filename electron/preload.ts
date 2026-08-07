@@ -39,6 +39,7 @@ import type {
   MemorySnapshot,
   UpdateMemoryInput,
 } from "../src/shared/memory";
+import type { TaskCommand } from "../src/shared/task-commands";
 
 const api = {
   platform: process.platform as NodeJS.Platform,
@@ -283,6 +284,31 @@ const api = {
     };
     ipcRenderer.on("browser:tab-command", listener);
     return () => ipcRenderer.removeListener("browser:tab-command", listener);
+  },
+  onTaskCommand: (
+    handler: (command: TaskCommand) => Promise<unknown> | unknown
+  ): (() => void) => {
+    const listener = async (
+      _event: Electron.IpcRendererEvent,
+      command: TaskCommand
+    ) => {
+      try {
+        const data = await handler(command);
+        ipcRenderer.send("tasks:command-result", {
+          requestId: command.requestId,
+          ok: true,
+          data,
+        });
+      } catch (error) {
+        ipcRenderer.send("tasks:command-result", {
+          requestId: command.requestId,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    };
+    ipcRenderer.on("tasks:command", listener);
+    return () => ipcRenderer.removeListener("tasks:command", listener);
   },
   onBrowserApprovalRequest: (
     handler: (request: BrowserApprovalRequest) => void

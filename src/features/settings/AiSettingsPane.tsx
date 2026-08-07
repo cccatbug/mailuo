@@ -253,8 +253,8 @@ function Field({
   children: React.ReactNode;
 }) {
   return (
-    <label className="grid gap-1.5">
-      <span className="text-xs font-medium">{label}</span>
+    <label className="grid min-w-0 gap-1.5">
+      <span className="truncate text-xs font-medium">{label}</span>
       {description && (
         <span className="-mt-1 text-[11px] leading-relaxed text-muted-foreground">
           {description}
@@ -576,7 +576,7 @@ function ProviderPane({
                   });
                 }}
               >
-                <SelectTrigger size="sm">
+                <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -610,7 +610,7 @@ function ProviderPane({
                   });
                 }}
               >
-                <SelectTrigger size="sm">
+                <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -632,7 +632,7 @@ function ProviderPane({
                   })
                 }
               >
-                <SelectTrigger size="sm">
+                <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -656,7 +656,7 @@ function ProviderPane({
                   })
                 }
               >
-                <SelectTrigger size="sm">
+                <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -1052,7 +1052,7 @@ function ProviderPane({
                         })
                       }
                     >
-                      <SelectTrigger size="sm">
+                      <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -1589,7 +1589,7 @@ function RoutesPane({
         return (
           <div
             key={useCase}
-            className="grid grid-cols-[130px_minmax(0,1fr)_130px_150px] items-end gap-3 rounded-lg border p-3"
+            className="grid grid-cols-[110px_minmax(0,1fr)] items-end gap-3 rounded-lg border p-3 lg:grid-cols-[130px_minmax(0,1fr)_130px_150px]"
           >
             <span className="pb-2 text-xs font-medium">
               {USE_CASE_LABELS[useCase]}
@@ -1611,7 +1611,7 @@ function RoutesPane({
                   });
                 }}
               >
-                <SelectTrigger size="sm">
+                <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -1637,7 +1637,7 @@ function RoutesPane({
                   })
                 }
               >
-                <SelectTrigger size="sm">
+                <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -1656,7 +1656,7 @@ function RoutesPane({
                   updateRoute(useCase, { contextProfileId })
                 }
               >
-                <SelectTrigger size="sm">
+                <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

@@ -5,6 +5,7 @@ import {
   FolderPlus,
   Globe2,
   Grid2x2,
+  Home,
   ListPlus,
   ListTree,
   MessageCircleMore,
@@ -251,25 +252,30 @@ export function CommandPalette() {
             打开设置
             <CommandShortcut>{MOD_KEY},</CommandShortcut>
           </CommandItem>
+          <CommandItem onSelect={() => run(() => goToView("home"))}>
+            <Home />
+            切换到主页
+            <CommandShortcut>{MOD_KEY}1</CommandShortcut>
+          </CommandItem>
           <CommandItem onSelect={() => run(() => goToView("list"))}>
             <SquareKanban />
             切换到列表视图
-            <CommandShortcut>{MOD_KEY}1</CommandShortcut>
+            <CommandShortcut>{MOD_KEY}2</CommandShortcut>
           </CommandItem>
           <CommandItem onSelect={() => run(() => goToView("graph"))}>
             <ListTree />
             切换到脉络图
-            <CommandShortcut>{MOD_KEY}2</CommandShortcut>
+            <CommandShortcut>{MOD_KEY}3</CommandShortcut>
           </CommandItem>
           <CommandItem onSelect={() => run(() => goToView("stats"))}>
             <ChartPie />
             切换到统计
-            <CommandShortcut>{MOD_KEY}3</CommandShortcut>
+            <CommandShortcut>{MOD_KEY}4</CommandShortcut>
           </CommandItem>
           <CommandItem onSelect={() => run(() => goToView("matrix"))}>
             <Grid2x2 />
             切换到四象限
-            <CommandShortcut>{MOD_KEY}4</CommandShortcut>
+            <CommandShortcut>{MOD_KEY}5</CommandShortcut>
           </CommandItem>
           <CommandItem
             onSelect={() =>

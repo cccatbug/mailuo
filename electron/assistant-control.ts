@@ -18,13 +18,38 @@ interface PendingApproval {
   timer: ReturnType<typeof setTimeout>;
 }
 
-const MUTATING_TOOLS = new Set(["bash", "edit", "write"]);
+const MUTATING_TOOLS = new Set([
+  "bash",
+  "edit",
+  "write",
+  "task_create",
+  "task_update",
+  "task_delete",
+  "task_link",
+]);
 
 const TOOL_LABELS: Record<string, string> = {
   bash: "运行命令",
   edit: "编辑文件",
   write: "写入文件",
+  task_create: "创建任务",
+  task_update: "修改任务",
+  task_delete: "删除任务",
+  task_link: "调整任务依赖",
+  project_list: "切换项目",
 };
+
+function isMutatingTool(
+  toolName: string,
+  input: Record<string, unknown>
+): boolean {
+  return (
+    MUTATING_TOOLS.has(toolName) ||
+    (toolName === "project_list" &&
+      typeof input.switchTo === "string" &&
+      input.switchTo.trim().length > 0)
+  );
+}
 
 function summarizeTool(toolName: string, input: Record<string, unknown>): string {
   const candidate =
@@ -86,7 +111,7 @@ export class AssistantControl {
     toolName: string,
     input: Record<string, unknown>
   ): Promise<boolean> {
-    if (!MUTATING_TOOLS.has(toolName) || this.mode === "yolo") return true;
+    if (!isMutatingTool(toolName, input) || this.mode === "yolo") return true;
     if (!this.sink) return false;
 
     const id = crypto.randomUUID();

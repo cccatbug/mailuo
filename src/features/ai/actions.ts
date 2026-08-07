@@ -4,6 +4,7 @@ import type { Priority, Status, Task } from "@/types";
 import { sanitizeChartSpec, type ChartSpec } from "./AiChart";
 import { sanitizeUiSpec, type UiSpec } from "./uiCatalog";
 import { taskTrackingSnapshot } from "@/lib/task-tracking";
+import { describeSchedule, taskSchedule } from "@/lib/task-schedule";
 
 /* ---------- 上下文构造 ---------- */
 
@@ -15,13 +16,14 @@ export function projectContext(projectId: string): string {
     new Date(timestamp).toISOString().slice(0, 10);
   const lines = list.map((t, i) => {
     const tracking = taskTrackingSnapshot(t);
+    const schedule = taskSchedule(t);
     const deps = t.deps
       .map((d) => list.findIndex((x) => x.id === d))
       .filter((n) => n >= 0)
       .map((n) => `T${n + 1}`)
       .join(",");
     return `T${i + 1} 「${t.title}」 状态:${t.status} 优先级:${t.priority}${
-      t.dueDate ? ` 期限:${t.dueDate}` : ""
+      schedule.type !== "none" ? ` 安排:${describeSchedule(schedule)}` : ""
     }${
       t.tracking.type === "progress"
         ? ` 类型:进度 进度:${tracking.summary}`
