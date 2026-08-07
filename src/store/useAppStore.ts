@@ -170,6 +170,9 @@ interface AppStore {
   updateTask: (id: string, patch: Partial<Task>) => void;
   deleteTask: (id: string) => RemovedTask | null;
   restoreTask: (removed: RemovedTask) => void;
+  /** 原子批量删除；返回的快照可整体还原，包括任务之间的依赖边 */
+  deleteTasks: (ids: string[]) => RemovedTask[];
+  restoreTasks: (removed: RemovedTask[]) => void;
   duplicateTask: (id: string) => Task | null;
   setStatus: (id: string, status: Status) => boolean;
   trackTask: (id: string, action: TaskTrackingAction) => boolean;
@@ -679,6 +682,71 @@ export const useAppStore = create<AppStore>((set, get) => {
       }
       commit(patch);
       return { task, referencedBy };
+    },
+
+    /**
+     * 一次性删除多个任务。
+     *
+     * 逐个调 deleteTask 是错的：删掉第一个时会把它从别人的 deps 里摘掉，等轮到
+     * 第二个，它的 referencedBy 快照已经不完整，撤销就会漏恢复依赖边。这里在
+     * 动手之前先按原始列表算好所有引用关系。
+     */
+    deleteTasks: (ids) => {
+      const { tasks, selectedTaskId, graphFocusTaskId, graphNodePositions } =
+        get();
+      const doomed = new Set(ids.filter((id) => tasks.some((t) => t.id === id)));
+      if (doomed.size === 0) return [];
+
+      const removed: RemovedTask[] = [...doomed].map((id) => ({
+        task: tasks.find((t) => t.id === id)!,
+        // 只记录「活下来的」引用者，被一起删掉的那些自带 deps
+        referencedBy: tasks
+          .filter((t) => !doomed.has(t.id) && t.deps.includes(id))
+          .map((t) => t.id),
+      }));
+
+      const positions = { ...graphNodePositions };
+      for (const id of doomed) delete positions[id];
+
+      commit({
+        tasks: reconcileTrackedTaskStatuses(
+          tasks
+            .filter((t) => !doomed.has(t.id))
+            .map((t) =>
+              t.deps.some((d) => doomed.has(d))
+                ? { ...t, deps: t.deps.filter((d) => !doomed.has(d)) }
+                : t
+            )
+        ),
+        selectedTaskId:
+          selectedTaskId && doomed.has(selectedTaskId) ? null : selectedTaskId,
+        graphFocusTaskId:
+          graphFocusTaskId && doomed.has(graphFocusTaskId)
+            ? null
+            : graphFocusTaskId,
+        graphNodePositions: positions,
+      });
+      return removed;
+    },
+
+    restoreTasks: (removed) => {
+      if (removed.length === 0) return;
+      const { tasks } = get();
+      const back = removed.filter(
+        (r) => !tasks.some((t) => t.id === r.task.id)
+      );
+      if (back.length === 0) return;
+      // 先把任务放回去，再逐条接回原来指向它们的依赖边
+      let next = [...tasks, ...back.map((r) => r.task)];
+      for (const { task, referencedBy } of back) {
+        const refs = new Set(referencedBy);
+        next = next.map((t) =>
+          refs.has(t.id) && !t.deps.includes(task.id)
+            ? { ...t, deps: [...t.deps, task.id] }
+            : t
+        );
+      }
+      commit({ tasks: reconcileTrackedTaskStatuses(next) });
     },
 
     restoreTask: (removed) => {

@@ -126,6 +126,9 @@ const CHATS_KEY = "mailuo-chats-v1";
 /** 距底多少像素内仍算「贴在底部」，容忍流式输出时的一两行抖动。 */
 const BOTTOM_SLACK = 80;
 
+/** 聊天记录写失败时只提示一次，避免每个 token 弹一条。 */
+let persistWarned = false;
+
 function loadChats(): Conversation[] {
   try {
     const raw = localStorage.getItem(CHATS_KEY);
@@ -166,16 +169,29 @@ export async function stopAssistantTurn(): Promise<void> {
 
 function persistChats() {
   const { conversations } = useChat.getState();
-  localStorage.setItem(
-    CHATS_KEY,
-    // 只留最近 60 条会话，单会话消息裁到 60
-    JSON.stringify(
-      [...conversations]
-        .sort((a, b) => b.updatedAt - a.updatedAt)
-        .slice(0, 60)
-        .map((c) => ({ ...c, messages: c.messages.slice(-60) }))
-    )
-  );
+  // 写聊天记录失败（配额满、序列化异常）不能把发送流程带崩：它就夹在
+  // busy=true 和真正发起请求之间，抛出去会让界面永远停在「生成中」
+  try {
+    localStorage.setItem(
+      CHATS_KEY,
+      // 只留最近 60 条会话，单会话消息裁到 60
+      JSON.stringify(
+        [...conversations]
+          .sort((a, b) => b.updatedAt - a.updatedAt)
+          .slice(0, 60)
+          .map((c) => ({ ...c, messages: c.messages.slice(-60) }))
+      )
+    );
+    persistWarned = false;
+  } catch (e) {
+    console.error("保存聊天记录失败", e);
+    if (!persistWarned) {
+      persistWarned = true;
+      toast.error("聊天记录暂时无法保存", {
+        description: "对话可以继续，但重启后可能丢失最近的记录。",
+      });
+    }
+  }
 }
 
 function currentConversation(): Conversation | null {
@@ -183,13 +199,21 @@ function currentConversation(): Conversation | null {
   return conversations.find((c) => c.id === currentId) ?? null;
 }
 
-function updateCurrent(mutate: (c: Conversation) => Conversation) {
-  const { conversations, currentId, set } = useChat.getState();
+function updateConversation(
+  conversationId: string | null,
+  mutate: (c: Conversation) => Conversation
+) {
+  const { conversations, set } = useChat.getState();
+  if (!conversationId) return;
   set({
     conversations: conversations.map((c) =>
-      c.id === currentId ? { ...mutate(c), updatedAt: Date.now() } : c
+      c.id === conversationId ? { ...mutate(c), updatedAt: Date.now() } : c
     ),
   });
+}
+
+function updateCurrent(mutate: (c: Conversation) => Conversation) {
+  updateConversation(useChat.getState().currentId, mutate);
 }
 
 function ensureConversation(projectId: string): Conversation {
@@ -433,8 +457,10 @@ async function completeAssistantTurn({
   let segText = "";
   let interrupted = false;
 
+  // 流事件必须落回发起这轮请求的会话；跟着当前选中会话走的话，用户中途切会话
+  // 就会把 token 写进另一段对话里
   const patchLast = (fn: (m: Message) => Message) => {
-    updateCurrent((c) => {
+    updateConversation(conversationId, (c) => {
       const msgs = [...c.messages];
       const last = msgs[msgs.length - 1];
       if (last?.role === "assistant") msgs[msgs.length - 1] = fn(last);
@@ -444,7 +470,7 @@ async function completeAssistantTurn({
   const patchLatestUserAttachments = (
     stored: AssistantAttachmentMeta[]
   ) => {
-    updateCurrent((c) => {
+    updateConversation(conversationId, (c) => {
       const messages = [...c.messages];
       for (let index = messages.length - 1; index >= 0; index--) {
         if (messages[index]?.role !== "user") continue;

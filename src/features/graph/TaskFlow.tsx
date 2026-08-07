@@ -39,7 +39,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { polishNotesWithToast } from "@/features/tasks/TaskListPanel";
-import { useAppStore, type NodePosition, type RemovedTask, type StatusFilter } from "@/store/useAppStore";
+import { useAppStore, type NodePosition, type StatusFilter } from "@/store/useAppStore";
 import { dependencyChainOf, isBlocked, wouldCreateCycle } from "@/lib/deps";
 import type { Task } from "@/types";
 import { TaskNode, type TaskNodeType } from "./TaskNode";
@@ -432,14 +432,12 @@ function Flow({ tasks, wrapRef }: { tasks: Task[]; wrapRef: React.RefObject<HTML
 
   const batchDelete = useCallback(() => {
     const store = useAppStore.getState();
-    const removed = selectedIds
-      .map((id) => store.deleteTask(id))
-      .filter((r): r is RemovedTask => r !== null);
+    const removed = store.deleteTasks(selectedIds);
     if (removed.length === 0) return;
     toast(`已删除 ${removed.length} 个任务`, {
       action: {
         label: "撤销",
-        onClick: () => removed.forEach((r) => store.restoreTask(r)),
+        onClick: () => store.restoreTasks(removed),
       },
     });
   }, [selectedIds]);
