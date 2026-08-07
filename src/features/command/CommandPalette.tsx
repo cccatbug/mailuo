@@ -1,6 +1,10 @@
+import { useEffect, useMemo, useState } from "react";
 import {
+  ChartPie,
   Folder,
+  FolderPlus,
   Globe2,
+  Grid2x2,
   ListPlus,
   ListTree,
   MessageCircleMore,
@@ -22,10 +26,15 @@ import {
   CommandSeparator,
   CommandShortcut,
 } from "@/components/ui/command";
-import { useAppStore } from "@/store/useAppStore";
+import { useAppStore, type ViewMode } from "@/store/useAppStore";
 import { cn } from "@/lib/utils";
 import { MOD_KEY } from "@/lib/platform";
-import { focusOrOpenBrowser, openAssetPanel, openBrowserPanel } from "@/components/DockLayout";
+import {
+  ensureWorkspace,
+  focusOrOpenBrowser,
+  openAssetPanel,
+  openBrowserPanel,
+} from "@/components/DockLayout";
 
 export function CommandPalette() {
   const open = useAppStore((s) => s.commandOpen);
@@ -43,9 +52,43 @@ export function CommandPalette() {
   const setAssistantOpen = useAppStore((s) => s.setAssistantOpen);
   const setAiDialog = useAppStore((s) => s.setAiDialog);
 
+  const [query, setQuery] = useState("");
+
   const run = (fn: () => void) => {
     fn();
     setOpen(false);
+  };
+
+  const projectById = useMemo(
+    () => new Map(projects.map((p) => [p.id, p])),
+    [projects]
+  );
+
+  // 一次挂载上千个 CommandItem 会让面板一打开就卡；没输入时只给当前项目的近期任务
+  const visibleTasks = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) {
+      return tasks
+        .filter((t) => t.projectId === selectedProjectId && t.status !== "done")
+        .slice(0, 20);
+    }
+    return tasks
+      .filter((t) => {
+        const project = projectById.get(t.projectId);
+        return `${t.title} ${project?.name ?? ""}`.toLowerCase().includes(q);
+      })
+      .slice(0, 50);
+  }, [tasks, query, selectedProjectId, projectById]);
+
+  // 面板关掉后清查询，下次打开不该还留着上次输的东西
+  useEffect(() => {
+    if (!open) setQuery("");
+  }, [open]);
+
+  const goToView = (v: ViewMode) => {
+    // 与 ⌘1/⌘2 保持一致：工作区标签被关掉时先把它开回来
+    ensureWorkspace();
+    setView(v);
   };
 
   return (
@@ -55,10 +98,51 @@ export function CommandPalette() {
       title="命令面板"
       description="搜索项目、任务或执行操作"
     >
+      {/* 交给 cmdk 做匹配与高亮，这里只负责别把上千个任务全挂上去 */}
       <Command>
-        <CommandInput placeholder="搜索项目、任务或操作…" />
+        <CommandInput
+          value={query}
+          onValueChange={setQuery}
+          placeholder="搜索项目、任务或操作…"
+        />
         <CommandList>
         <CommandEmpty>没有找到匹配项</CommandEmpty>
+        {/* 最高频的两个动作原本只能靠鼠标点，命令面板里反而没有 */}
+        <CommandGroup heading="新建">
+          <CommandItem
+            value="新建任务 new task"
+            onSelect={() =>
+              run(() => {
+                ensureWorkspace();
+                setView("list");
+                requestAnimationFrame(() =>
+                  window.dispatchEvent(new CustomEvent("mailuo:new-task"))
+                );
+              })
+            }
+            disabled={!selectedProjectId}
+          >
+            <ListPlus />
+            新建任务
+            <CommandShortcut>{MOD_KEY}N</CommandShortcut>
+          </CommandItem>
+          <CommandItem
+            value="新建项目 new project"
+            onSelect={() =>
+              run(() => {
+                const store = useAppStore.getState();
+                if (!store.panelLeft) store.togglePanel("left");
+                requestAnimationFrame(() =>
+                  window.dispatchEvent(new CustomEvent("mailuo:new-project"))
+                );
+              })
+            }
+          >
+            <FolderPlus />
+            新建项目
+          </CommandItem>
+        </CommandGroup>
+        <CommandSeparator />
         <CommandGroup heading="项目">
           {projects.map((p) => (
             <CommandItem
@@ -73,8 +157,8 @@ export function CommandPalette() {
         </CommandGroup>
         <CommandSeparator />
         <CommandGroup heading="任务">
-          {tasks.map((t) => {
-            const project = projects.find((p) => p.id === t.projectId);
+          {visibleTasks.map((t) => {
+            const project = projectById.get(t.projectId);
             return (
               <CommandItem
                 key={t.id}
@@ -167,15 +251,25 @@ export function CommandPalette() {
             打开设置
             <CommandShortcut>{MOD_KEY},</CommandShortcut>
           </CommandItem>
-          <CommandItem onSelect={() => run(() => setView("list"))}>
+          <CommandItem onSelect={() => run(() => goToView("list"))}>
             <SquareKanban />
             切换到列表视图
             <CommandShortcut>{MOD_KEY}1</CommandShortcut>
           </CommandItem>
-          <CommandItem onSelect={() => run(() => setView("graph"))}>
+          <CommandItem onSelect={() => run(() => goToView("graph"))}>
             <ListTree />
             切换到脉络图
             <CommandShortcut>{MOD_KEY}2</CommandShortcut>
+          </CommandItem>
+          <CommandItem onSelect={() => run(() => goToView("stats"))}>
+            <ChartPie />
+            切换到统计
+            <CommandShortcut>{MOD_KEY}3</CommandShortcut>
+          </CommandItem>
+          <CommandItem onSelect={() => run(() => goToView("matrix"))}>
+            <Grid2x2 />
+            切换到四象限
+            <CommandShortcut>{MOD_KEY}4</CommandShortcut>
           </CommandItem>
           <CommandItem
             onSelect={() =>

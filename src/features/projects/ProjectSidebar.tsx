@@ -360,7 +360,7 @@ export function ProjectSidebar() {
     // min-w：拖拽收窄时内容整体裁切而非文字换行挤压
     <nav className="flex h-full min-w-[170px] flex-col overflow-hidden bg-sidebar text-sidebar-foreground">
       <div className="flex h-9 shrink-0 items-center gap-1 border-b px-3">
-        <span className="text-[11px] font-medium tracking-[0.25em] text-muted-foreground">
+        <span className="text-[11px] font-medium text-muted-foreground">
           项目
         </span>
         <span className="text-[11px] text-muted-foreground tabular-nums">

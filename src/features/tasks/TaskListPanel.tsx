@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownToDot,
   ArrowUpFromDot,
@@ -30,7 +30,6 @@ import {
 import { addDays, format } from "date-fns";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
@@ -74,7 +73,7 @@ import {
 import type { Task } from "@/types";
 import { PRIORITY_LABEL } from "@/types";
 import { dependentsOf, isBlocked } from "@/lib/deps";
-import { isSubmitKey } from "@/lib/keyboard";
+import { isSubmitKey, isTextEditingTarget } from "@/lib/keyboard";
 import { useDebouncedCommit } from "@/lib/useDebouncedValue";
 import { taskTrackingSnapshot } from "@/lib/task-tracking";
 import { TaskFlow } from "@/features/graph/TaskFlow";
@@ -112,8 +111,15 @@ function StatusIcon({ task, blocked }: { task: Task; blocked: boolean }) {
   return <Circle className="size-5 text-muted-foreground/60" />;
 }
 
-function TaskRow({ task, byId }: { task: Task; byId: Map<string, Task> }) {
-  const selectedTaskId = useAppStore((s) => s.selectedTaskId);
+function TaskRow({
+  task,
+  byId,
+  selected,
+}: {
+  task: Task;
+  byId: Map<string, Task>;
+  selected: boolean;
+}) {
   const selectTask = useAppStore((s) => s.selectTask);
   const setStatus = useAppStore((s) => s.setStatus);
   const trackTask = useAppStore((s) => s.trackTask);
@@ -161,18 +167,17 @@ function TaskRow({ task, byId }: { task: Task; byId: Map<string, Task> }) {
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <div
-          role="button"
-          tabIndex={0}
+          // 行本身不声明 role=button：里面还嵌着状态按钮和 tooltip 触发器，
+          // 嵌套交互控件是无效 ARIA。选中状态交给外层 li 的 aria-selected。
           className={cn(
-            "group flex w-full items-center gap-3 rounded-lg border bg-card px-3 py-2.5 text-left transition-all",
-            "hover:shadow-sm",
-            task.id === selectedTaskId
-              ? "border-primary ring-2 ring-ring"
-              : "border-border/60",
-            blocked && "bg-muted/40"
+            "group relative flex w-full items-center gap-3 py-2 pr-3 pl-4 text-left transition-colors",
+            "before:absolute before:inset-y-1 before:left-0 before:w-[3px] before:rounded-full before:transition-colors",
+            selected
+              ? "bg-accent/60 before:bg-primary"
+              : "before:bg-transparent hover:bg-accent/30",
+            blocked && !selected && "bg-muted/25"
           )}
           onClick={() => selectTask(task.id)}
-          onKeyDown={(e) => e.key === "Enter" && selectTask(task.id)}
         >
           <Tooltip>
             <TooltipTrigger asChild>
@@ -221,63 +226,86 @@ function TaskRow({ task, byId }: { task: Task; byId: Map<string, Task> }) {
             {task.title}
           </span>
 
+          {/* 次要信息：标签最先让位，其次追踪摘要，保证右侧几列对齐 */}
+          {task.tags.length > 0 && (
+            <span className="hidden min-w-0 shrink items-center gap-1 xl:flex">
+              {task.tags.slice(0, 2).map((tag) => (
+                <span
+                  key={tag}
+                  className="truncate rounded-full bg-foreground/6 px-1.5 py-0.5 text-[11px] text-muted-foreground"
+                >
+                  {tag}
+                </span>
+              ))}
+            </span>
+          )}
+
           {task.tracking.type !== "standard" && (
-            <Badge
-              variant="secondary"
-              className="hidden max-w-36 gap-1 truncate tabular-nums md:inline-flex"
-            >
+            <span className="hidden max-w-32 shrink-0 items-center gap-1 truncate text-[11px] text-muted-foreground tabular-nums md:flex">
               {task.tracking.type === "checkin" ? (
                 <CalendarCheck2 className="size-3" />
               ) : (
                 <Gauge className="size-3" />
               )}
               {tracking.summary}
-            </Badge>
-          )}
-
-          {task.tags.slice(0, 2).map((tag) => (
-            <Badge key={tag} variant="outline" className="hidden lg:inline-flex">
-              {tag}
-            </Badge>
-          ))}
-          {task.priority !== "normal" && (
-            <Badge variant={task.priority === "high" ? "default" : "secondary"}>
-              {PRIORITY_LABEL[task.priority]}
-            </Badge>
-          )}
-          {due && !done && (
-            <span
-              className={cn(
-                "flex items-center gap-1 text-xs tabular-nums",
-                due.overdue ? "font-medium text-primary" : "text-muted-foreground"
-              )}
-            >
-              <CalendarDays className="size-3.5" />
-              {due.text}
             </span>
           )}
-          {task.deps.length > 0 && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="flex items-center gap-0.5 text-xs text-muted-foreground tabular-nums">
-                  <ArrowDownToDot className="size-3.5" />
-                  {task.deps.length}
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>{task.deps.length} 个前置任务</TooltipContent>
-            </Tooltip>
-          )}
-          {dependents > 0 && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="flex items-center gap-0.5 text-xs text-status-done tabular-nums">
-                  <ArrowUpFromDot className="size-3.5" />
-                  {dependents}
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>{dependents} 个后续任务等待它</TooltipContent>
-            </Tooltip>
-          )}
+
+          {/* 依赖计数：固定宽度，没有也占位，避免每行右缘参差 */}
+          <span className="hidden w-14 shrink-0 items-center justify-end gap-2 sm:flex">
+            {task.deps.length > 0 && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="flex items-center gap-0.5 text-[11px] text-muted-foreground tabular-nums">
+                    <ArrowDownToDot className="size-3.5" />
+                    {task.deps.length}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>{task.deps.length} 个前置任务</TooltipContent>
+              </Tooltip>
+            )}
+            {dependents > 0 && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="flex items-center gap-0.5 text-[11px] text-status-done tabular-nums">
+                    <ArrowUpFromDot className="size-3.5" />
+                    {dependents}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>{dependents} 个后续任务等待它</TooltipContent>
+              </Tooltip>
+            )}
+          </span>
+
+          <span className="w-9 shrink-0 text-right">
+            {task.priority !== "normal" && (
+              <span
+                className={cn(
+                  "text-[11px] font-medium",
+                  task.priority === "high"
+                    ? "text-primary"
+                    : "text-muted-foreground/70"
+                )}
+              >
+                {PRIORITY_LABEL[task.priority]}
+              </span>
+            )}
+          </span>
+
+          <span className="w-12 shrink-0 text-right">
+            {due && !done && (
+              <span
+                className={cn(
+                  "text-[11px] tabular-nums",
+                  due.overdue
+                    ? "font-medium text-primary"
+                    : "text-muted-foreground"
+                )}
+              >
+                {due.text}
+              </span>
+            )}
+          </span>
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent>
@@ -436,26 +464,33 @@ function Group({
   title,
   items,
   byId,
+  selectedTaskId,
   collapsible = false,
   accent,
 }: {
   title: string;
   items: Task[];
   byId: Map<string, Task>;
+  selectedTaskId: string | null;
   collapsible?: boolean;
   accent?: string;
 }) {
-  const [open, setOpen] = useState(!collapsible);
+  // 折叠状态放在 store 里，切视图/重挂载不再把「已完成」重新展开
+  const collapsedGroups = useAppStore((s) => s.collapsedGroups);
+  const toggleGroup = useAppStore((s) => s.toggleGroup);
+  const open = !collapsible || !collapsedGroups.includes(title);
   if (items.length === 0) return null;
   return (
-    <section className="mb-5">
+    <section className="mb-4">
       <button
         className={cn(
-          "mb-2 flex items-center gap-1.5 text-xs font-medium tracking-[0.2em] text-muted-foreground",
+          // 中文不加 letter-spacing，靠字重和颜色分层级
+          "mb-1 flex items-center gap-1.5 px-4 text-xs font-medium text-muted-foreground",
           collapsible && "cursor-pointer hover:text-foreground"
         )}
-        onClick={() => collapsible && setOpen(!open)}
+        onClick={() => collapsible && toggleGroup(title)}
         disabled={!collapsible}
+        aria-expanded={collapsible ? open : undefined}
       >
         {collapsible &&
           (open ? (
@@ -464,16 +499,23 @@ function Group({
             <ChevronRight className="size-3.5" />
           ))}
         <span className={accent}>{title}</span>
-        <Badge variant="secondary" className="h-4.5 px-1.5 tabular-nums">
+        <span className="text-muted-foreground/60 tabular-nums">
           {items.length}
-        </Badge>
+        </span>
       </button>
       {open && (
-        <div className="flex flex-col gap-2">
+        <ul className="flex flex-col">
           {items.map((t) => (
-            <TaskRow key={t.id} task={t} byId={byId} />
+            <li
+              key={t.id}
+              id={`task-row-${t.id}`}
+              role="option"
+              aria-selected={t.id === selectedTaskId}
+            >
+              <TaskRow task={t} byId={byId} selected={t.id === selectedTaskId} />
+            </li>
           ))}
-        </div>
+        </ul>
       )}
     </section>
   );
@@ -493,9 +535,39 @@ export function TaskListPanel({ fixedView }: { fixedView?: ViewMode } = {}) {
   const statusFilter = useAppStore((s) => s.statusFilter);
   const setStatusFilter = useAppStore((s) => s.setStatusFilter);
 
+  const selectedTaskId = useAppStore((s) => s.selectedTaskId);
+  const selectTask = useAppStore((s) => s.selectTask);
+  const setStatus = useAppStore((s) => s.setStatus);
+  const trackTask = useAppStore((s) => s.trackTask);
+  const deleteTask = useAppStore((s) => s.deleteTask);
+  const restoreTask = useAppStore((s) => s.restoreTask);
+  const collapsedGroups = useAppStore((s) => s.collapsedGroups);
+
   const [draft, setDraft] = useState("");
   // 搜索框本地即时回显，防抖后再驱动全局过滤，避免每敲一键就重算整棵列表
   const [searchDraft, setSearchDraft] = useDebouncedCommit(search, setSearch, 200);
+  const listRef = useRef<HTMLDivElement>(null);
+  const addRef = useRef<HTMLInputElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  // ⌘N 新建、⌘F 搜索：面板可见时才接管
+  useEffect(() => {
+    const focusAdd = () => addRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      const key = e.key.toLowerCase();
+      if (key !== "n" && key !== "f") return;
+      if (!listRef.current?.offsetParent) return;
+      e.preventDefault();
+      (key === "n" ? addRef : searchRef).current?.focus();
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("mailuo:new-task", focusAdd);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mailuo:new-task", focusAdd);
+    };
+  }, []);
 
   const project = projects.find((p) => p.id === selectedProjectId) ?? null;
 
@@ -551,6 +623,65 @@ export function TaskListPanel({ fixedView }: { fixedView?: ViewMode } = {}) {
     };
   }, [filtered, byId]);
 
+  // 分组展开后的可见顺序，方向键就沿着它走
+  const visibleOrder = useMemo(
+    () =>
+      [
+        ...groups.doing,
+        ...groups.ready,
+        ...groups.blocked,
+        ...(collapsedGroups.includes("已完成") ? [] : groups.done),
+      ].map((t) => t.id),
+    [groups, collapsedGroups]
+  );
+
+  const onListKeyDown = (e: React.KeyboardEvent) => {
+    if (isTextEditingTarget(e.target)) return;
+    if (visibleOrder.length === 0) return;
+    const at = selectedTaskId ? visibleOrder.indexOf(selectedTaskId) : -1;
+
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const forward = e.key === "ArrowDown";
+      const next =
+        at === -1
+          ? forward
+            ? 0
+            : visibleOrder.length - 1
+          : (at + (forward ? 1 : -1) + visibleOrder.length) % visibleOrder.length;
+      const id = visibleOrder[next];
+      selectTask(id);
+      listRef.current
+        ?.querySelector(`#task-row-${CSS.escape(id)}`)
+        ?.scrollIntoView({ block: "nearest" });
+      return;
+    }
+    if (at === -1) return;
+    const task = byId.get(visibleOrder[at]);
+    if (!task) return;
+
+    if (e.key === " ") {
+      e.preventDefault();
+      if (task.tracking.type === "checkin") {
+        trackTask(task.id, { type: "toggle-checkin" });
+      } else if (task.tracking.type === "standard") {
+        if (isBlocked(task, byId)) toast.warning("前置任务未完成，暂不可完成");
+        else setStatus(task.id, task.status === "done" ? "todo" : "done");
+      }
+    } else if (e.key === "Delete" || (e.metaKey && e.key === "Backspace")) {
+      e.preventDefault();
+      const removed = deleteTask(task.id);
+      if (removed) {
+        // 删完把选中挪到下一条，手不用离开键盘
+        const after = visibleOrder[at + 1] ?? visibleOrder[at - 1] ?? null;
+        selectTask(after);
+        toast(`已删除「${removed.task.title}」`, {
+          action: { label: "撤销", onClick: () => restoreTask(removed) },
+        });
+      }
+    }
+  };
+
   const doneCount = projectTasks.filter((t) => t.status === "done").length;
   const blockedCount = projectTasks.filter(
     (t) => t.status === "todo" && isBlocked(t, byId)
@@ -576,10 +707,9 @@ export function TaskListPanel({ fixedView }: { fixedView?: ViewMode } = {}) {
               onClick={() => {
                 const store = useAppStore.getState();
                 if (!store.panelLeft) store.togglePanel("left");
-                setTimeout(
-                  () =>
-                    window.dispatchEvent(new CustomEvent("mailuo:new-project")),
-                  50
+                // 等侧栏这一帧挂载完再派发，比赌 50ms 可靠
+                requestAnimationFrame(() =>
+                  window.dispatchEvent(new CustomEvent("mailuo:new-project"))
                 );
               }}
             >
@@ -610,50 +740,53 @@ export function TaskListPanel({ fixedView }: { fixedView?: ViewMode } = {}) {
 
   return (
     <main className="flex h-full min-w-0 flex-col bg-background">
-      <header className="px-6 pt-3">
-        <div className="mb-3 flex items-center gap-3">
-          <Progress
-            value={pct}
-            className="h-1.5 flex-1 **:data-[slot=progress-indicator]:bg-[var(--indicator)]"
-            style={{ "--indicator": project.color } as React.CSSProperties}
-          />
-          <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-            {doneCount}/{projectTasks.length} 已成
-            {blockedCount > 0 && (
-              <span className="text-primary"> · {blockedCount} 受阻</span>
-            )}
-          </span>
-        </div>
+      <header className="flex items-center gap-3 px-4 pt-3 pb-2.5">
+        <span
+          className="size-2.5 shrink-0 rounded-full"
+          style={{ background: project.color }}
+        />
+        <span className="min-w-0 truncate font-heading text-sm font-bold">
+          {project.name}
+        </span>
+        <Progress
+          value={pct}
+          className="h-1 min-w-8 flex-1 **:data-[slot=progress-indicator]:bg-[var(--indicator)]"
+          style={{ "--indicator": project.color } as React.CSSProperties}
+        />
+        <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
+          {doneCount}/{projectTasks.length}
+          {blockedCount > 0 && (
+            <span className="text-primary"> · {blockedCount} 受阻</span>
+          )}
+        </span>
       </header>
 
       {view === "list" ? (
         <>
-          <div className="flex items-center gap-2 px-6 pb-3">
-            <InputGroup className="flex-1">
+          {/* 添加 / 搜索 / 筛选压到一行，别让正文被三层 chrome 顶下去 */}
+          <div className="flex items-center gap-2 px-4 pb-2.5">
+            <InputGroup className="min-w-0 flex-[2]">
               <InputGroupAddon>
                 <Plus />
               </InputGroupAddon>
               <InputGroupInput
+                ref={addRef}
                 value={draft}
                 placeholder="添加一件事，回车记入脉络…"
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => isSubmitKey(e, { allowShift: true }) && submitDraft()}
               />
             </InputGroup>
-            <Button onClick={submitDraft} disabled={!draft.trim()}>
-              添加
-            </Button>
-          </div>
-
-          <div className="flex items-center gap-2 px-6 pb-3">
-            <InputGroup className="flex-1">
+            <InputGroup className="min-w-0 flex-1">
               <InputGroupAddon>
                 <Search />
               </InputGroupAddon>
               <InputGroupInput
+                ref={searchRef}
                 value={searchDraft}
-                placeholder="搜索任务、备注、标签…"
+                placeholder="搜索…"
                 onChange={(e) => setSearchDraft(e.target.value)}
+                onKeyDown={(e) => e.key === "Escape" && setSearchDraft("")}
               />
               {searchDraft && (
                 <InputGroupAddon align="inline-end">
@@ -667,7 +800,7 @@ export function TaskListPanel({ fixedView }: { fixedView?: ViewMode } = {}) {
               value={statusFilter}
               onValueChange={(v) => setStatusFilter(v as StatusFilter)}
             >
-              <SelectTrigger className="w-28">
+              <SelectTrigger className="w-24 shrink-0">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -684,7 +817,19 @@ export function TaskListPanel({ fixedView }: { fixedView?: ViewMode } = {}) {
 
           <Separator />
 
-          <div className="flex-1 overflow-y-auto px-6 py-4">
+          <div
+            ref={listRef}
+            role="listbox"
+            aria-label="任务列表"
+            // 列表整体是一个 tab stop，内部用方向键走——这样行里嵌的状态按钮
+            // 不会把 Tab 顺序撑成上百站
+            tabIndex={0}
+            aria-activedescendant={
+              selectedTaskId ? `task-row-${selectedTaskId}` : undefined
+            }
+            onKeyDown={onListKeyDown}
+            className="flex-1 overflow-y-auto py-3 outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset"
+          >
             {filtered.length === 0 ? (
               <Empty>
                 <EmptyHeader>
@@ -703,18 +848,30 @@ export function TaskListPanel({ fixedView }: { fixedView?: ViewMode } = {}) {
               </Empty>
             ) : (
               <>
-                <Group title="进行中" items={groups.doing} byId={byId} />
-                <Group title="可着手" items={groups.ready} byId={byId} />
+                <Group
+                  title="进行中"
+                  items={groups.doing}
+                  byId={byId}
+                  selectedTaskId={selectedTaskId}
+                />
+                <Group
+                  title="可着手"
+                  items={groups.ready}
+                  byId={byId}
+                  selectedTaskId={selectedTaskId}
+                />
                 <Group
                   title="受阻 · 待前置"
                   items={groups.blocked}
                   byId={byId}
+                  selectedTaskId={selectedTaskId}
                   accent="text-primary"
                 />
                 <Group
                   title="已完成"
                   items={groups.done}
                   byId={byId}
+                  selectedTaskId={selectedTaskId}
                   collapsible
                 />
               </>

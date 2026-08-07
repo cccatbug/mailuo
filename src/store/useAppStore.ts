@@ -118,6 +118,8 @@ interface AppStore {
   graphFocusTaskId: string | null;
   search: string;
   statusFilter: StatusFilter;
+  /** 被折叠的任务分组标题；放在 store 里才能跨视图切换保持 */
+  collapsedGroups: string[];
   commandOpen: boolean;
   settingsOpen: boolean;
   assistantOpen: boolean;
@@ -139,6 +141,7 @@ interface AppStore {
   setGraphFocus: (id: string | null) => void;
   setSearch: (q: string) => void;
   setStatusFilter: (f: StatusFilter) => void;
+  toggleGroup: (title: string) => void;
   setCommandOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
   setAssistantOpen: (open: boolean) => void;
@@ -189,6 +192,17 @@ const THEME_PALETTE_KEY = "mailuo-theme-palette";
 const SETTINGS_KEY = "mailuo-settings";
 const PANELS_KEY = "mailuo-panels";
 const GRAPH_POSITIONS_KEY = "mailuo-graph-positions";
+const COLLAPSED_GROUPS_KEY = "mailuo-collapsed-groups";
+
+function loadCollapsedGroups(): string[] {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_GROUPS_KEY);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : null;
+    return Array.isArray(parsed) ? (parsed as string[]) : ["已完成"];
+  } catch {
+    return ["已完成"];
+  }
+}
 
 function loadGraphPositions(): Record<string, NodePosition> {
   try {
@@ -285,6 +299,7 @@ export const useAppStore = create<AppStore>((set, get) => {
     graphFocusTaskId: null,
     search: "",
     statusFilter: "all",
+    collapsedGroups: loadCollapsedGroups(),
     commandOpen: false,
     settingsOpen: false,
     assistantOpen: false,
@@ -391,6 +406,14 @@ export const useAppStore = create<AppStore>((set, get) => {
     setGraphFocus: (graphFocusTaskId) => set({ graphFocusTaskId }),
     setSearch: (search) => set({ search }),
     setStatusFilter: (statusFilter) => set({ statusFilter }),
+    toggleGroup: (title) => {
+      const current = get().collapsedGroups;
+      const next = current.includes(title)
+        ? current.filter((t) => t !== title)
+        : [...current, title];
+      localStorage.setItem(COLLAPSED_GROUPS_KEY, JSON.stringify(next));
+      set({ collapsedGroups: next });
+    },
     setCommandOpen: (commandOpen) => set({ commandOpen }),
     setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
     setAssistantOpen: (assistantOpen) => set({ assistantOpen }),

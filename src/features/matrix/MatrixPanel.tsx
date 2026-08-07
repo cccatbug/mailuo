@@ -89,7 +89,7 @@ function Piece({
       {/* 棋子本体：围棋子质感的圆片 */}
       <div
         className={cn(
-          "mx-auto flex size-7 items-center justify-center rounded-full border font-heading text-[11px] font-bold shadow-md transition-transform",
+          "mx-auto flex size-8 items-center justify-center rounded-full border px-0.5 font-heading text-[10px] leading-none font-bold shadow-md transition-transform",
           "bg-gradient-to-b from-card to-muted text-foreground",
           drag && "scale-125 shadow-xl",
           selected && "ring-2 ring-primary ring-offset-1 ring-offset-background",
@@ -103,7 +103,8 @@ function Piece({
               : "var(--border)",
         }}
       >
-        {task.title.trim().charAt(0)}
+        {/* 只显示首字时中文任务大量撞车（「完成…」「确认…」），给到两个字 */}
+        {task.title.trim().slice(0, 2)}
       </div>
       {/* 名签：悬停或拖动时展示 */}
       <div
@@ -148,16 +149,16 @@ export function MatrixPanel({
         <div className="pointer-events-none absolute inset-y-0 left-1/2 w-px bg-border" />
         <div className="pointer-events-none absolute inset-x-0 top-1/2 h-px bg-border" />
         {/* 轴向文字 */}
-        <span className="pointer-events-none absolute top-1.5 left-1/2 -translate-x-1/2 text-[10px] tracking-[0.3em] text-muted-foreground">
+        <span className="pointer-events-none absolute top-1.5 left-1/2 -translate-x-1/2 text-[10px] text-muted-foreground">
           重要 ↑
         </span>
-        <span className="pointer-events-none absolute bottom-1.5 left-1/2 -translate-x-1/2 text-[10px] tracking-[0.3em] text-muted-foreground">
+        <span className="pointer-events-none absolute bottom-1.5 left-1/2 -translate-x-1/2 text-[10px] text-muted-foreground">
           ↓ 不重要
         </span>
-        <span className="pointer-events-none absolute top-1/2 left-1.5 -translate-y-1/2 text-[10px] tracking-[0.2em] text-muted-foreground [writing-mode:vertical-rl]">
+        <span className="pointer-events-none absolute top-1/2 left-1.5 -translate-y-1/2 text-[10px] text-muted-foreground [writing-mode:vertical-rl]">
           ← 紧急
         </span>
-        <span className="pointer-events-none absolute top-1/2 right-1.5 -translate-y-1/2 text-[10px] tracking-[0.2em] text-muted-foreground [writing-mode:vertical-rl]">
+        <span className="pointer-events-none absolute top-1/2 right-1.5 -translate-y-1/2 text-[10px] text-muted-foreground [writing-mode:vertical-rl]">
           不紧急 →
         </span>
         {/* 象限角标 */}
