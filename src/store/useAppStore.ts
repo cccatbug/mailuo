@@ -87,6 +87,14 @@ export interface RemovedTask {
   referencedBy: string[];
 }
 
+/** 删除项目后的快照，用于「撤销」；连同项目下的全部任务一起保存 */
+export interface RemovedProject {
+  project: Project;
+  tasks: Task[];
+  /** 原本在列表中的位置，撤销时插回原处而不是追加到末尾 */
+  index: number;
+}
+
 interface AppStore {
   loaded: boolean;
   /** 存档读取失败的原因；非 null 时界面必须停在恢复页，不得写盘。 */
@@ -152,7 +160,8 @@ interface AppStore {
   togglePinProject: (id: string) => void;
   toggleArchiveProject: (id: string) => void;
   duplicateProject: (id: string) => void;
-  deleteProject: (id: string) => void;
+  deleteProject: (id: string) => RemovedProject | null;
+  restoreProject: (removed: RemovedProject) => void;
 
   addTask: (title: string, patch?: Partial<Task>) => Task | null;
   updateTask: (id: string, patch: Partial<Task>) => void;
@@ -423,12 +432,15 @@ export const useAppStore = create<AppStore>((set, get) => {
       if (side === "left") set({ panelLeft: open });
       else set({ panelRight: open });
     },
+    // 筛选条件跟着走到新项目会让它看起来像空项目，一并归位
     selectProject: (id) =>
       set({
         selectedProjectId: id,
         selectedTaskId: null,
         graphFocusTaskId: null,
         search: "",
+        statusFilter: "all",
+        graphFilter: "all",
       }),
     // 选中任务时自动展开右栏（Obsidian 式：面板按需出现）
     selectTask: (id) =>
@@ -548,6 +560,10 @@ export const useAppStore = create<AppStore>((set, get) => {
 
     deleteProject: (id) => {
       const { projects, tasks, selectedProjectId } = get();
+      const index = projects.findIndex((p) => p.id === id);
+      if (index === -1) return null;
+      const project = projects[index];
+      const owned = tasks.filter((t) => t.projectId === id);
       const rest = projects.filter((p) => p.id !== id);
       commit({
         projects: rest,
@@ -556,6 +572,20 @@ export const useAppStore = create<AppStore>((set, get) => {
           selectedProjectId === id ? (rest[0]?.id ?? null) : selectedProjectId,
         selectedTaskId: null,
         graphFocusTaskId: null,
+      });
+      return { project, tasks: owned, index };
+    },
+
+    restoreProject: (removed) => {
+      const { projects, tasks } = get();
+      if (projects.some((p) => p.id === removed.project.id)) return;
+      const next = [...projects];
+      next.splice(Math.min(removed.index, next.length), 0, removed.project);
+      commit({
+        projects: next,
+        tasks: [...tasks, ...removed.tasks],
+        selectedProjectId: removed.project.id,
+        selectedTaskId: null,
       });
     },
 

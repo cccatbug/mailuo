@@ -29,6 +29,28 @@ import {
 } from "./actions";
 import { defaultPrompt, loadPromptTemplates, type PromptKind } from "./promptTemplates";
 
+/**
+ * Esc 和点遮罩不能丢掉正在生成、或已经生成但还没写入的结果。
+ *
+ * 这些结果是花钱调模型换来的，误关一次就得重来，所以宁可让用户显式点「取消」。
+ */
+function keepOpenWhileValuable(
+  busy: boolean,
+  hasUnsavedResult: boolean
+): Partial<React.ComponentProps<typeof DialogContent>> {
+  if (!busy && !hasUnsavedResult) return {};
+  const block = (event: { preventDefault: () => void }) => {
+    event.preventDefault();
+    toast.info(busy ? "正在生成，请稍候" : "请先写入结果，或点「取消」放弃");
+  };
+  return {
+    onEscapeKeyDown: block,
+    onInteractOutside: block,
+    // 生成中把右上角的 × 也藏掉，避免和「取消」语义打架
+    showCloseButton: !busy,
+  };
+}
+
 function PromptChoices({
   kind,
   onSelect,
@@ -153,7 +175,10 @@ function PlanProjectDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent
+        className="sm:max-w-lg"
+        {...keepOpenWhileValuable(loading, drafts !== null)}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="size-4 text-primary" />
@@ -237,7 +262,10 @@ function BreakdownDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent
+        className="sm:max-w-lg"
+        {...keepOpenWhileValuable(loading, drafts !== null)}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="size-4 text-primary" />
@@ -317,7 +345,10 @@ function SuggestDepsDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent
+        className="sm:max-w-lg"
+        {...keepOpenWhileValuable(loading, (suggestions?.length ?? 0) > 0)}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="size-4 text-primary" />
@@ -412,7 +443,10 @@ function PolishDialog({ taskId, onClose }: { taskId: string; onClose: () => void
   };
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-xl">
+      <DialogContent
+        className="sm:max-w-xl"
+        {...keepOpenWhileValuable(loading, result !== null)}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><Sparkles className="size-4 text-primary" />润色「{task?.title}」</DialogTitle>
           <DialogDescription>先说明希望如何改写，生成后确认才会覆盖原备注。</DialogDescription>

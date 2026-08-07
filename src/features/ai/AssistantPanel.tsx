@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import {
   AlertCircle,
+  ArrowDown,
   Bot,
   Brain,
   Check,
@@ -121,6 +122,9 @@ export interface Conversation {
 /* ---------- 会话历史（localStorage 持久化） ---------- */
 
 const CHATS_KEY = "mailuo-chats-v1";
+
+/** 距底多少像素内仍算「贴在底部」，容忍流式输出时的一两行抖动。 */
+const BOTTOM_SLACK = 80;
 
 function loadChats(): Conversation[] {
   try {
@@ -868,9 +872,41 @@ export function AssistantPanel() {
     }
   }, [selectedProjectId]);
 
+  // 只有用户本来就贴在底部时才跟随流式输出；否则他正在往回读，别把他拽走
+  const [pinned, setPinned] = useState(true);
+  const pinnedRef = useRef(true);
+  pinnedRef.current = pinned;
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior });
+  }, []);
+
+  const onScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setPinned(el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK);
+  }, []);
+
   useEffect(() => {
-    requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: 999999 }));
-  }, [messages]);
+    if (!pinnedRef.current) return;
+    const frame = requestAnimationFrame(() => scrollToBottom());
+    return () => cancelAnimationFrame(frame);
+  }, [messages, scrollToBottom]);
+
+  // 自己刚发出的消息，无论之前滚到哪里都该跳回底部
+  const lastRole = messages[messages.length - 1]?.role;
+  const messageCount = messages.length;
+  useEffect(() => {
+    if (lastRole !== "user") return;
+    setPinned(true);
+    const frame = requestAnimationFrame(() => scrollToBottom());
+    return () => cancelAnimationFrame(frame);
+  }, [messageCount, lastRole, scrollToBottom]);
+
+  // 换会话/换项目时重新贴底
+  useEffect(() => setPinned(true), [currentId, selectedProjectId]);
 
   useEffect(() => {
     const refreshStatus = () => {
@@ -941,8 +977,12 @@ export function AssistantPanel() {
   };
 
   return (
-    <div className="flex h-full min-w-0 flex-col overflow-hidden bg-background">
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-4">
+    <div className="relative flex h-full min-w-0 flex-col overflow-hidden bg-background">
+      <div
+        ref={scrollRef}
+        onScroll={onScroll}
+        className="min-h-0 flex-1 overflow-y-auto p-4"
+      >
         {messages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-sm text-muted-foreground">
             <Bot className="size-12 text-primary/70" />
@@ -1147,6 +1187,19 @@ export function AssistantPanel() {
           </div>
         )}
       </div>
+
+      {!pinned && messages.length > 0 && (
+        <button
+          className="absolute bottom-2 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-full border bg-popover/95 px-3 py-1.5 text-xs shadow-md backdrop-blur transition-colors hover:bg-accent"
+          onClick={() => {
+            setPinned(true);
+            scrollToBottom("smooth");
+          }}
+        >
+          <ArrowDown className="size-3.5" />
+          回到最新
+        </button>
+      )}
 
       {assistantStatus?.ready === false && (
         <div className="mx-3 mb-2 flex items-center gap-2 rounded-lg border border-dashed p-2.5 text-xs">

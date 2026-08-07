@@ -72,6 +72,7 @@ import type { Status, Task, TaskType } from "@/types";
 import { PRIORITY_LABEL, STATUS_LABEL, TASK_TYPE_LABEL } from "@/types";
 import { dependentsOf, isBlocked, wouldCreateCycle } from "@/lib/deps";
 import { isSubmitKey } from "@/lib/keyboard";
+import { useDebouncedCommit } from "@/lib/useDebouncedValue";
 import { MiniBoard } from "@/features/matrix/MiniBoard";
 import { polishNotesWithToast } from "@/features/tasks/TaskListPanel";
 import { Md } from "@/features/ai/Markdown";
@@ -79,6 +80,31 @@ import { bridge } from "@/lib/bridge";
 import type { AssetRecord } from "@/shared/assets";
 import { openResource } from "@/features/files/resource-navigation";
 import { taskTrackingSnapshot } from "@/lib/task-tracking";
+
+/** 标题：本地承接输入，防抖写回，失焦立即落定；空标题回退到原值而不是存成空 */
+function TaskTitleInput({ task }: { task: Task }) {
+  const updateTask = useAppStore((s) => s.updateTask);
+  const [title, setTitle, flush] = useDebouncedCommit(
+    task.title,
+    (next) => {
+      const trimmed = next.trim();
+      if (trimmed) updateTask(task.id, { title: trimmed });
+    }
+  );
+
+  return (
+    <Input
+      value={title}
+      onChange={(e) => setTitle(e.target.value)}
+      onBlur={() => {
+        if (!title.trim()) setTitle(task.title);
+        flush();
+      }}
+      className="border-none px-0 font-heading text-lg font-bold shadow-none focus-visible:ring-0 dark:bg-transparent"
+      aria-label="任务标题"
+    />
+  );
+}
 
 /** Obsidian 式备注：失焦渲染 markdown，点击进入编辑 */
 function NotesEditor({
@@ -92,6 +118,7 @@ function NotesEditor({
   const projectId = useAppStore((state) => state.selectedProjectId);
   const [assets, setAssets] = useState<AssetRecord[]>([]);
   const [assetQuery, setAssetQuery] = useState<string | null>(null);
+  const [draft, setDraft, flushDraft] = useDebouncedCommit(value, onChange);
   if (editing) {
     return (
       <div className="relative">
@@ -106,7 +133,7 @@ function NotesEditor({
                   className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent"
                   onMouseDown={(event) => {
                     event.preventDefault();
-                    onChange(value.replace(/#([^\s#]*)$/, `[#${asset.name}](mailuo-asset:${asset.id}) `));
+                    setDraft(draft.replace(/#([^\s#]*)$/, `[#${asset.name}](mailuo-asset:${asset.id}) `));
                     setAssetQuery(null);
                   }}
                 >
@@ -118,18 +145,21 @@ function NotesEditor({
         )}
         <Textarea
           autoFocus={Boolean(value)}
-          value={value}
+          value={draft}
           placeholder="写点什么…（支持 markdown，输入 # 引用项目资产）"
           className="min-h-24 resize-y font-sans text-sm leading-relaxed"
           onChange={(e) => {
-            onChange(e.target.value);
+            setDraft(e.target.value);
             const match = /(?:^|\s)#([^\s#]*)$/.exec(e.target.value.slice(0, e.target.selectionStart ?? 0));
             setAssetQuery(match?.[1] ?? null);
-            if (match && projectId) void bridge?.listAssets(projectId).then(setAssets);
+            // 资产列表按项目缓存，别每敲一个字符就走一次 IPC
+            if (match && projectId && assets.length === 0)
+              void bridge?.listAssets(projectId).then(setAssets);
           }}
           onBlur={() => {
             setAssetQuery(null);
-            if (value.trim()) setEditing(false);
+            flushDraft();
+            if (draft.trim()) setEditing(false);
           }}
         />
       </div>
@@ -633,6 +663,9 @@ export function TaskDetailPanel() {
 
   const task = tasks.find((t) => t.id === selectedTaskId) ?? null;
   const byId = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
+  // 两条正则扫全文，别每次渲染都跑
+  const notes = task?.notes ?? "";
+  const resources = useMemo(() => extractResources(notes), [notes]);
 
   if (!task) {
     return (
@@ -661,7 +694,6 @@ export function TaskDetailPanel() {
   const unfinishedDeps = deps.filter((d) => d.status !== "done").length;
   const dependents = dependentsOf(task.id, tasks);
   const dueDate = task.dueDate ? parseISO(task.dueDate) : undefined;
-  const resources = extractResources(task.notes);
 
   const remove = () => {
     const removed = deleteTask(task.id);
@@ -675,12 +707,7 @@ export function TaskDetailPanel() {
   return (
     <aside className="flex h-full min-w-[250px] flex-col overflow-hidden bg-background">
       <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-4 pb-6">
-        <Input
-          value={task.title}
-          onChange={(e) => updateTask(task.id, { title: e.target.value })}
-          className="border-none px-0 font-heading text-lg font-bold shadow-none focus-visible:ring-0 dark:bg-transparent"
-          aria-label="任务标题"
-        />
+        <TaskTitleInput task={task} />
         <Separator className="mb-4" />
 
         {blocked && (

@@ -284,6 +284,7 @@ export function ProjectSidebar() {
   const selectedProjectId = useAppStore((s) => s.selectedProjectId);
   const selectProject = useAppStore((s) => s.selectProject);
   const deleteProject = useAppStore((s) => s.deleteProject);
+  const restoreProject = useAppStore((s) => s.restoreProject);
   const setAiDialog = useAppStore((s) => s.setAiDialog);
   const togglePinProject = useAppStore((s) => s.togglePinProject);
   const toggleArchiveProject = useAppStore((s) => s.toggleArchiveProject);
@@ -688,7 +689,11 @@ export function ProjectSidebar() {
           <AlertDialogHeader>
             <AlertDialogTitle>删除项目「{deleting?.name}」？</AlertDialogTitle>
             <AlertDialogDescription>
-              项目下的所有任务将一并删除，此操作无法撤销。
+              项目下的
+              {deleting
+                ? ` ${tasks.filter((t) => t.projectId === deleting.id).length} 个任务`
+                : "所有任务"}
+              将一并删除。删除后可通过提示中的「撤销」恢复。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -696,10 +701,19 @@ export function ProjectSidebar() {
             <AlertDialogAction
               variant="destructive"
               onClick={() => {
-                if (deleting) {
-                  deleteProject(deleting.id);
-                  toast.success(`项目「${deleting.name}」已删除`);
-                }
+                if (!deleting) return;
+                const removed = deleteProject(deleting.id);
+                if (!removed) return;
+                toast(`已删除「${removed.project.name}」`, {
+                  description:
+                    removed.tasks.length > 0
+                      ? `连同 ${removed.tasks.length} 个任务`
+                      : undefined,
+                  action: {
+                    label: "撤销",
+                    onClick: () => restoreProject(removed),
+                  },
+                });
               }}
             >
               删除

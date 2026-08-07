@@ -75,6 +75,7 @@ import type { Task } from "@/types";
 import { PRIORITY_LABEL } from "@/types";
 import { dependentsOf, isBlocked } from "@/lib/deps";
 import { isSubmitKey } from "@/lib/keyboard";
+import { useDebouncedCommit } from "@/lib/useDebouncedValue";
 import { taskTrackingSnapshot } from "@/lib/task-tracking";
 import { TaskFlow } from "@/features/graph/TaskFlow";
 import { StatsPanel } from "@/features/stats/StatsPanel";
@@ -493,6 +494,8 @@ export function TaskListPanel({ fixedView }: { fixedView?: ViewMode } = {}) {
   const setStatusFilter = useAppStore((s) => s.setStatusFilter);
 
   const [draft, setDraft] = useState("");
+  // 搜索框本地即时回显，防抖后再驱动全局过滤，避免每敲一键就重算整棵列表
+  const [searchDraft, setSearchDraft] = useDebouncedCommit(search, setSearch, 200);
 
   const project = projects.find((p) => p.id === selectedProjectId) ?? null;
 
@@ -648,13 +651,13 @@ export function TaskListPanel({ fixedView }: { fixedView?: ViewMode } = {}) {
                 <Search />
               </InputGroupAddon>
               <InputGroupInput
-                value={search}
+                value={searchDraft}
                 placeholder="搜索任务、备注、标签…"
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => setSearchDraft(e.target.value)}
               />
-              {search && (
+              {searchDraft && (
                 <InputGroupAddon align="inline-end">
-                  <button aria-label="清除搜索" onClick={() => setSearch("")}>
+                  <button aria-label="清除搜索" onClick={() => setSearchDraft("")}>
                     <X className="size-3.5" />
                   </button>
                 </InputGroupAddon>
