@@ -56,6 +56,19 @@ export type AiDiscoveryAdapter =
   | "ollama"
   | "manual";
 
+/**
+ * DeepSeek exposes its server-side web search only through the Responses API.
+ * Keep this capability derived from the preset/protocol pair so it does not
+ * require a config schema migration.
+ */
+export function usesDeepSeekWebSearch(
+  provider: Pick<AiProviderConfig, "preset" | "api">
+): boolean {
+  return (
+    provider.preset === "deepseek" && provider.api === "openai-responses"
+  );
+}
+
 export const aiUseCaseSchema = z.enum(AI_USE_CASES);
 const uuidSchema = z.string().uuid();
 const nonEmptyStringSchema = z.string().trim().min(1);

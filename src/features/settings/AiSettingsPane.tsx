@@ -36,6 +36,7 @@ import {
   AI_USE_CASES,
   collectAiConfigReferences,
   modelRefKey,
+  usesDeepSeekWebSearch,
   type AiApiType,
   type AiAuthMode,
   type AiConfigV1,
@@ -109,7 +110,7 @@ const PRESETS: Record<
   deepseek: {
     label: "DeepSeek",
     baseUrl: "https://api.deepseek.com",
-    api: "openai-completions",
+    api: "openai-responses",
     authMode: "api-key",
     discovery: "openai",
   },
@@ -228,7 +229,10 @@ function baseUrlForProtocol(
       url.pathname = "/anthropic";
       return url.toString().replace(/\/$/, "");
     }
-    if (api === "openai-completions" && path === "/anthropic") {
+    if (
+      (api === "openai-completions" || api === "openai-responses") &&
+      path === "/anthropic"
+    ) {
       url.pathname = "/";
       return url.toString().replace(/\/$/, "");
     }
@@ -869,6 +873,12 @@ function ProviderPane({
 
           <div className="rounded-lg border p-3">
             <p className="mb-2 text-xs font-medium">协议兼容设置</p>
+            {usesDeepSeekWebSearch(provider) && (
+              <p className="mb-2 rounded-md bg-accent/60 px-2.5 py-2 text-[11px] leading-relaxed text-muted-foreground">
+                DeepSeek Responses 会自动向小枢会话接入服务端 web_search；
+                搜索由 DeepSeek 执行，不需要额外配置搜索服务。
+              </p>
+            )}
             <div className="grid grid-cols-2 gap-2">
               {provider.api === "anthropic-messages" ? (
                 <>

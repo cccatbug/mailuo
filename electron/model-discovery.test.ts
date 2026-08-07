@@ -264,4 +264,148 @@ describe("testProviderConnection", () => {
       )
     ).rejects.toThrow("404");
   });
+
+  it("uses DeepSeek Responses and sends its server-side web search tool", async () => {
+    let requestedPath = "";
+    let requestedBody = "";
+    const baseUrl = await serve((request, response) => {
+      requestedPath = request.url ?? "";
+      request.setEncoding("utf8");
+      request.on("data", (chunk) => {
+        requestedBody += chunk;
+      });
+      request.on("end", () => {
+        response.writeHead(200, {
+          "content-type": "text/event-stream",
+          connection: "keep-alive",
+        });
+        const send = (event: Record<string, unknown>) => {
+          response.write(
+            `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`
+          );
+        };
+        const responseBase = {
+          id: "resp_deepseek_test",
+          object: "response",
+          created_at: 1,
+          model: "deepseek-v4-flash",
+          output: [],
+          parallel_tool_calls: true,
+          error: null,
+          incomplete_details: null,
+        };
+        send({
+          type: "response.created",
+          sequence_number: 0,
+          response: { ...responseBase, status: "in_progress" },
+        });
+        send({
+          type: "response.output_item.added",
+          sequence_number: 1,
+          output_index: 0,
+          item: {
+            id: "ws_deepseek_test",
+            type: "web_search_call",
+            status: "in_progress",
+          },
+        });
+        send({
+          type: "response.web_search_call.searching",
+          sequence_number: 2,
+          output_index: 0,
+          item_id: "ws_deepseek_test",
+        });
+        send({
+          type: "response.web_search_call.completed",
+          sequence_number: 3,
+          output_index: 0,
+          item_id: "ws_deepseek_test",
+        });
+        send({
+          type: "response.output_item.done",
+          sequence_number: 4,
+          output_index: 0,
+          item: {
+            id: "ws_deepseek_test",
+            type: "web_search_call",
+            status: "completed",
+          },
+        });
+        send({
+          type: "response.output_item.added",
+          sequence_number: 5,
+          output_index: 1,
+          item: {
+            id: "msg_deepseek_test",
+            type: "message",
+            role: "assistant",
+            status: "in_progress",
+            content: [],
+          },
+        });
+        send({
+          type: "response.output_text.delta",
+          sequence_number: 6,
+          output_index: 1,
+          content_index: 0,
+          item_id: "msg_deepseek_test",
+          delta: "OK",
+        });
+        const message = {
+          id: "msg_deepseek_test",
+          type: "message",
+          role: "assistant",
+          status: "completed",
+          content: [
+            {
+              type: "output_text",
+              text: "OK",
+              annotations: [],
+            },
+          ],
+        };
+        send({
+          type: "response.output_item.done",
+          sequence_number: 7,
+          output_index: 1,
+          item: message,
+        });
+        send({
+          type: "response.completed",
+          sequence_number: 8,
+          response: {
+            ...responseBase,
+            status: "completed",
+            output: [message],
+            usage: {
+              input_tokens: 8,
+              input_tokens_details: { cached_tokens: 0 },
+              output_tokens: 1,
+              output_tokens_details: { reasoning_tokens: 0 },
+              total_tokens: 9,
+            },
+          },
+        });
+        response.end();
+      });
+    });
+
+    const result = await testProviderConnection(
+      provider({
+        preset: "deepseek",
+        baseUrl,
+        api: "openai-responses",
+      }),
+      credential,
+      { modelId: "deepseek-v4-flash" }
+    );
+
+    expect(requestedPath).toBe("/responses");
+    expect(JSON.parse(requestedBody)).toMatchObject({
+      model: "deepseek-v4-flash",
+      stream: true,
+      tools: [{ type: "web_search" }],
+    });
+    expect(result.message).toContain("流式消息成功");
+  });
 });

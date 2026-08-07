@@ -8,9 +8,13 @@ import type {
   AiProviderConfig,
   DiscoveredModel,
 } from "../src/shared/ai-config";
-import { runtimeProviderId } from "../src/shared/ai-config";
+import {
+  runtimeProviderId,
+  usesDeepSeekWebSearch,
+} from "../src/shared/ai-config";
 import { secretHeaderEnvName } from "./ai-config-store";
 import { providerRegistration } from "./ai-runtime";
+import { injectDeepSeekWebSearch } from "./provider-tools";
 
 const INFERRED_CONTEXT_WINDOW = 128_000;
 const INFERRED_MAX_TOKENS = 16_384;
@@ -476,6 +480,9 @@ async function testProviderMessages(
       {
         signal: lifecycle.signal,
         maxRetries: 0,
+        ...(usesDeepSeekWebSearch(provider)
+          ? { onPayload: injectDeepSeekWebSearch }
+          : {}),
       }
     );
     let text = "";

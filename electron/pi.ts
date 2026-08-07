@@ -21,6 +21,7 @@ import type {
   AiModelRef,
   AiRequestContext,
 } from "../src/shared/ai-config";
+import { usesDeepSeekWebSearch } from "../src/shared/ai-config";
 import type {
   MemoryCandidate,
   MemoryEntry,
@@ -39,6 +40,7 @@ import {
   type MemoryExtractor,
 } from "./memory-engine";
 import { createBrowserTools } from "./browser-tools";
+import { createProviderToolsExtension } from "./provider-tools";
 import { BROWSER_CONTROL } from "./browser-runtime";
 import {
   ASSISTANT_CONTROL,
@@ -233,6 +235,10 @@ async function makeSession(
         resolved.contextProfile.sources.attachments.enabled
           ? "用户附件会保存在该工作目录的 .attachments 目录。"
           : ""
+      }${
+        usesDeepSeekWebSearch(resolved.provider)
+          ? "\n你还可以使用由 DeepSeek 服务端执行的 web_search 获取最新网页信息。"
+          : ""
       }`
     : system;
 
@@ -263,7 +269,10 @@ async function makeSession(
     noThemes: true,
     noContextFiles: true,
     extensionFactories: opts.withTools
-      ? [assistantPermissionExtension]
+      ? [
+          assistantPermissionExtension,
+          createProviderToolsExtension(resolved.provider),
+        ]
       : [],
     systemPromptOverride: () => fullSystem,
   });
