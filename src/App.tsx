@@ -1,7 +1,6 @@
 import { useEffect } from "react";
 import { FolderOpen, Minus, RotateCcw, Square, TriangleAlert, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAppStore, type ViewMode } from "@/store/useAppStore";
 import { Ribbon } from "@/components/Ribbon";
@@ -314,7 +313,6 @@ export default function App() {
       <CommandPalette />
       <SettingsDialog />
       <AiDialogs />
-      <Toaster position="bottom-right" richColors />
     </TooltipProvider>
   );
 }
