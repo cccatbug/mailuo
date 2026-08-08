@@ -17,6 +17,7 @@ import {
   assistantAbort,
   assistantReset,
   assistantSend,
+  listAssistantCapabilities,
   listModels,
   listSkills,
   memoryPath,
@@ -92,6 +93,14 @@ import type {
   BrowserTabUpdate,
 } from "../src/shared/browser";
 import type { TaskCommandResult } from "../src/shared/task-commands";
+import { PI_RESOURCES } from "./pi-resources";
+import {
+  reportWindowLoadError,
+  safeSendToContents,
+  safeSendToWindow,
+  sendPiResourceProgress,
+  showWindowWhenReady,
+} from "./window-lifecycle";
 
 const isMac = process.platform === "darwin";
 
@@ -150,7 +159,7 @@ let win: BrowserWindow | null = null;
 
 /** 关窗前请渲染进程 flush 一次；渲染进程没响应就最多等 1.5s，不能卡住退出。 */
 function requestRendererFlush(target: BrowserWindow): Promise<void> {
-  if (target.webContents.isDestroyed()) return Promise.resolve();
+  if (target.isDestroyed()) return Promise.resolve();
   const token = randomUUID();
   return new Promise<void>((resolve) => {
     const done = () => {
@@ -163,7 +172,7 @@ function requestRendererFlush(target: BrowserWindow): Promise<void> {
     };
     const timer = setTimeout(done, 1500);
     ipcMain.on("state:flush-done", onDone);
-    target.webContents.send("state:flush-request", token);
+    if (!safeSendToWindow(target, "state:flush-request", token)) done();
   });
 }
 
@@ -200,15 +209,21 @@ function createWindow() {
     callback(contents.id === appContents.id);
   });
 
-  win.once("ready-to-show", () => win?.show());
+  const createdWindow = win;
+  createdWindow.once("ready-to-show", () => showWindowWhenReady(createdWindow));
+  createdWindow.on("closed", () => {
+    if (win === createdWindow) win = null;
+  });
 
   // 关窗前给渲染进程一次落盘机会，否则防抖窗口里的最后一次改动会丢
   let stateFlushed = false;
-  win.on("close", (event) => {
-    if (stateFlushed || !win) return;
+  createdWindow.on("close", (event) => {
+    if (stateFlushed) return;
     event.preventDefault();
     stateFlushed = true;
-    void requestRendererFlush(win).finally(() => win?.close());
+    void requestRendererFlush(createdWindow).finally(() => {
+      if (!createdWindow.isDestroyed()) createdWindow.close();
+    });
   });
   win.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
@@ -239,9 +254,9 @@ function createWindow() {
   });
 
   if (process.env.ELECTRON_RENDERER_URL) {
-    void win.loadURL(process.env.ELECTRON_RENDERER_URL);
+    void win.loadURL(process.env.ELECTRON_RENDERER_URL).catch(reportWindowLoadError);
   } else {
-    void win.loadFile(path.join(__dirname, "../renderer/index.html"));
+    void win.loadFile(path.join(__dirname, "../renderer/index.html")).catch(reportWindowLoadError);
   }
 }
 
@@ -260,7 +275,68 @@ async function resolveProviderDraft(
   return { provider, credential };
 }
 
+async function savePiConfig(
+  mutate: (config: AiConfigV1) => void
+): Promise<{ snapshot: Awaited<ReturnType<typeof AI_RUNTIME.snapshot>>; resources: Awaited<ReturnType<typeof PI_RESOURCES.discover>> }> {
+  const current = await AI_RUNTIME.snapshot();
+  const next = structuredClone(current.config);
+  mutate(next);
+  const saved = await AI_RUNTIME.saveConfig(next, current.etag);
+  assistantReset();
+  return { snapshot: saved, resources: await PI_RESOURCES.discover(saved.config) };
+}
+
+async function currentPiResources() {
+  const snapshot = await AI_RUNTIME.snapshot();
+  return PI_RESOURCES.discover(snapshot.config);
+}
+
+function normalizedPiPath(value: string): string {
+  const pathValue = value.trim();
+  if (!pathValue || pathValue.includes("\u0000")) {
+    throw new Error("资源路径无效");
+  }
+  return path.resolve(pathValue);
+}
+
+function assertPiResourceKind(value: unknown): "extension" | "skill" {
+  if (value !== "extension" && value !== "skill") {
+    throw new Error("资源类型无效");
+  }
+  return value;
+}
+
+function assertPiSourceKind(value: unknown): "local" | "terminal" | "skills-sh" {
+  if (value !== "local" && value !== "terminal" && value !== "skills-sh") {
+    throw new Error("资源来源类型无效");
+  }
+  return value;
+}
+
+function isWithin(root: string, candidate: string): boolean {
+  const base = path.resolve(root);
+  const value = path.resolve(candidate);
+  return value === base || value.startsWith(`${base}${path.sep}`);
+}
+
+function skillWriteRoots(config: AiConfigV1): string[] {
+  return [
+    AI_CONFIG.skillsDir,
+    AI_CONFIG.skillsShDir,
+    ...config.pi.skillPaths.map((entry) => entry.path),
+  ].map((entry) => path.resolve(AI_CONFIG.root, entry));
+}
+
+function assertSkillWritable(config: AiConfigV1, filePath: string): string {
+  const candidate = path.resolve(filePath);
+  if (!skillWriteRoots(config).some((root) => isWithin(root, candidate))) {
+    throw new Error("只能编辑已登记或应用管理目录中的 Skill");
+  }
+  return candidate;
+}
+
 function registerIpc() {
+  PI_RESOURCES.onProgress((event) => sendPiResourceProgress(win, event));
   ipcMain.handle("state:load", () => loadState());
   ipcMain.handle("state:save", (_e, data: string) => saveState(data));
   ipcMain.handle("state:dir", () => app.getPath("userData"));
@@ -487,7 +563,284 @@ function registerIpc() {
   );
 
   ipcMain.handle("agent:models", () => listModels());
-  ipcMain.handle("agent:skills", () => listSkills());
+  ipcMain.handle("agent:skills", async () => {
+    const config = await AI_RUNTIME.snapshot();
+    return listSkills(config.config.routes.assistant.contextProfileId);
+  });
+  ipcMain.handle(
+    "agent:capabilities",
+    (_event, projectId: string, modelOverride?: AiModelRef | null) =>
+      listAssistantCapabilities(
+        projectId ?? "default",
+        modelOverride ? aiModelRefSchema.parse(modelOverride) : undefined
+      )
+  );
+  ipcMain.handle("pi:resources:list", () => currentPiResources());
+  ipcMain.handle("pi:resources:refresh", () => currentPiResources());
+  ipcMain.handle("pi:resources:cancel", () => PI_RESOURCES.cancel());
+  ipcMain.handle("pi:extensions:search", (_event, query: string) =>
+    PI_RESOURCES.searchPiExtensions(query)
+  );
+  ipcMain.handle("pi:package:preview", (_event, source: string) =>
+    PI_RESOURCES.previewPackage(source)
+  );
+  ipcMain.handle("pi:package:install", async (_event, source: string) => {
+    const current = await AI_RUNTIME.snapshot();
+    const normalizedSource = source.trim();
+    if (!normalizedSource) throw new Error("Package source 不能为空");
+    const installedPath = await PI_RESOURCES.installPackage(
+      current.config,
+      normalizedSource
+    );
+    return savePiConfig((config) => {
+      const existing = config.pi.packages.find(
+        (entry) => entry.source === normalizedSource
+      );
+      if (existing) {
+        existing.enabled = true;
+        if (installedPath) existing.installedPath = installedPath;
+      } else {
+        config.pi.packages.push({
+          source: normalizedSource,
+          enabled: true,
+          ...(installedPath ? { installedPath } : {}),
+        });
+      }
+    });
+  });
+  ipcMain.handle("pi:package:remove", async (_event, source: string) => {
+    const current = await AI_RUNTIME.snapshot();
+    const normalizedSource = source.trim();
+    await PI_RESOURCES.removePackage(current.config, normalizedSource);
+    return savePiConfig((config) => {
+      config.pi.packages = config.pi.packages.filter(
+        (entry) => entry.source !== normalizedSource
+      );
+    });
+  });
+  ipcMain.handle("pi:package:set-enabled", (_event, source: string, enabled: boolean) =>
+    savePiConfig((config) => {
+      const entry = config.pi.packages.find((item) => item.source === source.trim());
+      if (!entry) throw new Error("Package 不存在");
+      entry.enabled = Boolean(enabled);
+    })
+  );
+  ipcMain.handle("pi:package:update", async (_event, source?: string) => {
+    const current = await AI_RUNTIME.snapshot();
+    await PI_RESOURCES.updatePackage(current.config, source?.trim() || undefined);
+    assistantReset();
+    return {
+      snapshot: current,
+      resources: await PI_RESOURCES.discover(current.config),
+    };
+  });
+  ipcMain.handle("pi:skills-sh:search", (_event, query: string) =>
+    PI_RESOURCES.searchSkillsSh(query)
+  );
+  ipcMain.handle("pi:skills-sh:list", (_event, source: string) =>
+    PI_RESOURCES.listSkillsSh(source)
+  );
+  ipcMain.handle(
+    "pi:skills-sh:install",
+    async (_event, source: string, skillNames: string[] = []) => {
+      const result = await PI_RESOURCES.installSkillsSh(source, skillNames);
+      const saved = await savePiConfig((config) => {
+        const install = result.install;
+        config.pi.skillsSh.installs = config.pi.skillsSh.installs.filter(
+          (entry) => entry.id !== install.id
+        );
+        config.pi.skillsSh.installs.push(install);
+        if (!config.pi.skillPaths.some((entry) => path.resolve(entry.path) === path.resolve(result.skillPath!))) {
+          config.pi.skillPaths.push({
+            path: result.skillPath!,
+            enabled: true,
+            sourceKind: "skills-sh",
+            label: install.source,
+          });
+        }
+      });
+      return { ...saved, command: result };
+    }
+  );
+  ipcMain.handle(
+    "pi:skills-sh:update",
+    async (_event, installId: string, skillNames: string[] = []) => {
+      const current = await AI_RUNTIME.snapshot();
+      const install = current.config.pi.skillsSh.installs.find((entry) => entry.id === installId);
+      if (!install) throw new Error("skills.sh 安装记录不存在");
+      await PI_RESOURCES.updateSkillsSh(install.root, skillNames);
+      assistantReset();
+      return { snapshot: current, resources: await PI_RESOURCES.discover(current.config) };
+    }
+  );
+  ipcMain.handle(
+    "pi:skills-sh:remove",
+    async (_event, installId: string, skillNames: string[] = []) => {
+      const current = await AI_RUNTIME.snapshot();
+      const install = current.config.pi.skillsSh.installs.find((entry) => entry.id === installId);
+      if (!install) throw new Error("skills.sh 安装记录不存在");
+      const result = await PI_RESOURCES.removeSkillsSh(install.root, skillNames);
+      const saved = await savePiConfig((config) => {
+        config.pi.skillsSh.installs = config.pi.skillsSh.installs.filter((entry) => entry.id !== installId);
+        config.pi.skillPaths = config.pi.skillPaths.filter(
+          (entry) => !path.resolve(entry.path).startsWith(`${path.resolve(install.root)}${path.sep}`)
+        );
+      });
+      return { ...saved, command: result };
+    }
+  );
+  ipcMain.handle(
+    "pi:path:add",
+    (_event, kind: unknown, resourcePath: string, sourceKind: unknown, label?: string) =>
+      savePiConfig((config) => {
+        const resourceKind = assertPiResourceKind(kind);
+        const pathKind = assertPiSourceKind(sourceKind);
+        const normalizedPath = normalizedPiPath(resourcePath);
+        const target = resourceKind === "extension" ? config.pi.extensionPaths : config.pi.skillPaths;
+        if (!target.some((entry) => path.resolve(entry.path) === normalizedPath)) {
+          target.push({
+            path: normalizedPath,
+            enabled: true,
+            sourceKind: pathKind,
+            ...(label?.trim() ? { label: label.trim() } : {}),
+          });
+        }
+      })
+  );
+  ipcMain.handle(
+    "pi:path:remove",
+    (_event, kind: unknown, resourcePath: string) =>
+      savePiConfig((config) => {
+        const resourceKind = assertPiResourceKind(kind);
+        const normalizedPath = normalizedPiPath(resourcePath);
+        if (resourceKind === "extension") {
+          config.pi.extensionPaths = config.pi.extensionPaths.filter(
+            (entry) => path.resolve(entry.path) !== normalizedPath
+          );
+        } else {
+          config.pi.skillPaths = config.pi.skillPaths.filter(
+            (entry) => path.resolve(entry.path) !== normalizedPath
+          );
+        }
+      })
+  );
+  ipcMain.handle(
+    "pi:path:set-enabled",
+    (_event, kind: unknown, resourcePath: string, enabled: boolean) =>
+      savePiConfig((config) => {
+        const resourceKind = assertPiResourceKind(kind);
+        const normalizedPath = normalizedPiPath(resourcePath);
+        const target = resourceKind === "extension" ? config.pi.extensionPaths : config.pi.skillPaths;
+        const entry = target.find((item) => path.resolve(item.path) === normalizedPath);
+        if (!entry) throw new Error("资源路径未登记");
+        entry.enabled = Boolean(enabled);
+      })
+  );
+  ipcMain.handle(
+    "pi:extension:set-enabled",
+    (_event, id: string, enabled: boolean) =>
+      savePiConfig((config) => {
+        const key = id.trim();
+        if (!key) throw new Error("扩展 ID 无效");
+        config.pi.extensionOverrides[key] = Boolean(enabled);
+      })
+  );
+  ipcMain.handle(
+    "pi:skill:set-profiles",
+    (_event, id: string, profileIds: string[] | null) =>
+      savePiConfig((config) => {
+        const key = id.trim();
+        if (!key) throw new Error("Skill ID 无效");
+        if (profileIds === null) delete config.pi.skillProfileIds[key];
+        else config.pi.skillProfileIds[key] = [...new Set(profileIds.map((value) => value.trim()).filter(Boolean))];
+      })
+  );
+  ipcMain.handle("pi:path:pick", async (_event, kind: unknown) => {
+    const resourceKind = assertPiResourceKind(kind);
+    const result = await dialog.showOpenDialog({
+      title: resourceKind === "extension" ? "选择 pi Extension" : "选择 Skills 目录或 SKILL.md",
+      properties: ["openFile", "openDirectory"],
+      ...(resourceKind === "extension"
+        ? { filters: [{ name: "Extension", extensions: ["ts", "js", "mjs", "cjs"] }] }
+        : { filters: [{ name: "Skill", extensions: ["md"] }] }),
+    });
+    return result.canceled ? null : result.filePaths[0] ?? null;
+  });
+  ipcMain.handle("pi:resource:open", async (_event, resourcePath: string) => {
+    const candidate = normalizedPiPath(resourcePath);
+    const resources = await currentPiResources();
+    const allowed = [...resources.extensions.map((item) => item.path), ...resources.skills.map((item) => item.filePath), ...resources.paths.map((item) => item.path)];
+    if (!allowed.some((item) => path.resolve(item) === candidate || candidate.startsWith(`${path.resolve(item)}${path.sep}`))) {
+      throw new Error("只能打开已登记的资源路径");
+    }
+    return shell.openPath(candidate);
+  });
+  ipcMain.handle("pi:skill:read", async (_event, id: string) => {
+    const resources = await currentPiResources();
+    const skill = resources.skills.find((entry) => entry.id === id);
+    if (!skill) throw new Error("Skill 不存在或尚未刷新");
+    return fs.readFile(skill.filePath, "utf8");
+  });
+  ipcMain.handle(
+    "pi:skill:write",
+    async (_event, id: string, content: string) => {
+      if (typeof content !== "string" || content.length > 250_000) {
+        throw new Error("SKILL.md 不能为空或超过 250 KB");
+      }
+      const current = await AI_RUNTIME.snapshot();
+      const resources = await PI_RESOURCES.discover(current.config);
+      const skill = resources.skills.find((entry) => entry.id === id);
+      if (!skill) throw new Error("Skill 不存在或尚未刷新");
+      const filePath = assertSkillWritable(current.config, skill.filePath);
+      await fs.writeFile(filePath, content, "utf8");
+      assistantReset();
+      return { snapshot: current, resources: await PI_RESOURCES.discover(current.config) };
+    }
+  );
+  ipcMain.handle(
+    "pi:skill:create",
+    async (
+      _event,
+      name: string,
+      content?: string,
+      rootInput?: string
+    ) => {
+      const current = await AI_RUNTIME.snapshot();
+      const root = rootInput ? normalizedPiPath(rootInput) : path.resolve(AI_CONFIG.skillsDir);
+      if (!skillWriteRoots(current.config).some((entry) => path.resolve(entry) === root)) {
+        throw new Error("新建 Skill 只能写入已登记或应用管理的 Skill 根目录");
+      }
+      const slug = name.trim().toLowerCase();
+      if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(slug)) {
+        throw new Error("Skill 名称只能使用小写字母、数字和连字符");
+      }
+      const filePath = path.join(root, slug, "SKILL.md");
+      if (!isWithin(root, filePath)) throw new Error("Skill 路径越界");
+      try {
+        await fs.access(filePath);
+        throw new Error("Skill 已存在");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      const sourceEntry = current.config.pi.skillPaths.find(
+        (entry) => path.resolve(entry.path) === root
+      );
+      const body = content?.trim() || `---\nname: ${slug}\ndescription: 请填写这个 Skill 的用途与使用时机。\n---\n\n# ${slug}\n\n请填写执行步骤。\n`;
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.writeFile(filePath, `${body.endsWith("\n") ? body : `${body}\n`}`, "utf8");
+      const saved = await savePiConfig((config) => {
+        if (!config.pi.skillPaths.some((entry) => path.resolve(entry.path) === root)) {
+          config.pi.skillPaths.push({
+            path: root,
+            enabled: true,
+            sourceKind: sourceEntry?.sourceKind ?? "local",
+            ...(sourceEntry?.label ? { label: sourceEntry.label } : {}),
+          });
+        }
+      });
+      return saved;
+    }
+  );
   ipcMain.handle("ai:config:get", () => AI_RUNTIME.snapshot());
   ipcMain.handle("ai:config:reload", async () => {
     const snapshot = await AI_RUNTIME.reload();
@@ -682,9 +1035,7 @@ function registerIpc() {
         context ? aiRequestContextSchema.parse(context) : undefined,
         modelOverride ? aiModelRefSchema.parse(modelOverride) : undefined,
         (event) => {
-          if (!e.sender.isDestroyed()) {
-            e.sender.send("assistant:event", requestId, event);
-          }
+          safeSendToContents(e.sender, "assistant:event", requestId, event);
         }
       )
   );
@@ -719,10 +1070,13 @@ if (!app.requestSingleInstanceLock()) {
     if (contents.getType() === "webview") BROWSER_SESSION.configureContents(contents);
   });
   app.on("second-instance", () => {
-    if (win) {
-      if (win.isMinimized()) win.restore();
-      win.focus();
+    if (!win || win.isDestroyed()) {
+      win = null;
+      createWindow();
+      return;
     }
+    if (win.isMinimized()) win.restore();
+    win.focus();
   });
 
   void app.whenReady().then(async () => {
@@ -743,7 +1097,8 @@ if (!app.requestSingleInstanceLock()) {
     BROWSER_RUNTIME.cancelPending();
     TASK_RUNTIME.cancelPending();
     assistantReset();
-    if (!isMac) app.quit();
+    // macOS 生产应用保留进程；开发时必须退出，否则下一次 pnpm dev 会被旧实例锁住，Vite 也会随之退出。
+    if (!isMac || process.env.NODE_ENV_ELECTRON_VITE === "development") app.quit();
   });
 
   let browserDataFlushed = false;

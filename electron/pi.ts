@@ -9,8 +9,10 @@ import {
   SettingsManager,
   type AgentSession,
   type AgentSessionEvent,
+  type ExtensionRuntime,
 } from "@earendil-works/pi-coding-agent";
 import type { ImageContent } from "@earendil-works/pi-ai/compat";
+import { PI_RESOURCES } from "./pi-resources";
 import type {
   AssistantAttachmentMeta,
   AssistantAttachmentPayload,
@@ -21,6 +23,7 @@ import type {
   AiModelRef,
   AiRequestContext,
 } from "../src/shared/ai-config";
+import type { AssistantCapabilities } from "../src/shared/pi-capabilities";
 import { usesDeepSeekWebSearch } from "../src/shared/ai-config";
 import type {
   MemoryCandidate,
@@ -180,32 +183,27 @@ export interface SkillInfo {
   content: string;
 }
 
-export async function listSkills(): Promise<SkillInfo[]> {
-  const dir = AI_CONFIG.skillsDir;
+export async function listSkills(profileId?: string): Promise<SkillInfo[]> {
+  const snapshot = await AI_RUNTIME.snapshot();
+  const resources = await PI_RESOURCES.discover(snapshot.config);
   const out: SkillInfo[] = [];
-  let entries: string[] = [];
-  try {
-    entries = await fs.readdir(dir);
-  } catch {
-    return out;
-  }
-  for (const name of entries) {
+  for (const skill of resources.skills) {
+    if (!skill.enabled) continue;
+    if (profileId && skill.profileIds && !skill.profileIds.includes(profileId)) {
+      continue;
+    }
     try {
-      const raw = await fs.readFile(path.join(dir, name, "SKILL.md"), "utf8");
-      const fm = /^---\n([\s\S]*?)\n---/.exec(raw);
-      const desc =
-        fm?.[1].match(/^description:\s*(.+)$/m)?.[1]?.trim() ?? "";
-      const skillName = fm?.[1].match(/^name:\s*(.+)$/m)?.[1]?.trim() ?? name;
+      const raw = await fs.readFile(skill.filePath, "utf8");
       out.push({
-        name: skillName,
-        description: desc.slice(0, 200),
+        name: skill.name,
+        description: skill.description.slice(0, 200),
         content: raw.slice(0, 12000),
       });
     } catch {
-      // 无 SKILL.md 的目录跳过
+      // 资源扫描结果可能在刷新前失效，跳过并由资源诊断展示。
     }
   }
-  return out;
+  return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export async function listModels(): Promise<
@@ -223,11 +221,16 @@ export async function listModels(): Promise<
 
 /* ---------- 会话构造 ---------- */
 
-async function makeSession(
+interface MailuoSessionRuntime {
+  session: AgentSession;
+  extensionRuntime: ExtensionRuntime;
+}
+
+async function makeSessionRuntime(
   resolved: ResolvedAiRoute,
   system: string,
   opts: { cwd?: string; withTools?: boolean } = {}
-): Promise<AgentSession> {
+): Promise<MailuoSessionRuntime> {
   const cwd = opts.cwd ?? process.cwd();
   if (opts.cwd) await fs.mkdir(cwd, { recursive: true });
 
@@ -260,15 +263,22 @@ async function makeSession(
     },
     images: { blockImages: !profile.sources.attachments.enabled },
   });
+  const aiSnapshot = await AI_RUNTIME.snapshot();
+  const piResources = await PI_RESOURCES.discover(aiSnapshot.config);
+  const extensionPaths = piResources.extensions
+    .filter((extension) => extension.enabled)
+    .map((extension) => extension.path);
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir: AI_CONFIG.root,
     settingsManager,
+    // Keep ambient ~/.pi/.agents resources isolated; explicit app-managed paths below still load.
     noExtensions: true,
     noSkills: true,
     noPromptTemplates: true,
     noThemes: true,
     noContextFiles: true,
+    additionalExtensionPaths: extensionPaths,
     extensionFactories: opts.withTools
       ? [
           assistantPermissionExtension,
@@ -282,7 +292,7 @@ async function makeSession(
     ? [...createBrowserTools(cwd), ...createTaskTools(), createTodoTool()]
     : [];
 
-  const { session } = await createAgentSession({
+  const { session, extensionsResult } = await createAgentSession({
     cwd,
     agentDir: AI_CONFIG.root,
     modelRuntime: await AI_RUNTIME.modelRuntime(),
@@ -291,33 +301,23 @@ async function makeSession(
     sessionManager: SessionManager.inMemory(cwd),
     settingsManager,
     resourceLoader,
-    // 纯任务型调用不开工具；小枢会话开放安全内建工具
-    tools: opts.withTools
-      ? [
-          "read",
-          "bash",
-          "edit",
-          "write",
-          "grep",
-          "find",
-          "ls",
-          "browser_tabs",
-          "browser_snapshot",
-          "browser_act",
-          "browser_capture",
-          "task_list",
-          "task_detail",
-          "task_create",
-          "task_update",
-          "task_delete",
-          "task_link",
-          "project_list",
-          "todo_write",
-        ]
-      : [],
+    // Assistant sessions omit `tools`, allowing Pi to auto-load static and
+    // session_start-registered extension tools. Tool-less one-shots stay denied.
+    ...(opts.withTools ? {} : { tools: [] }),
     customTools,
   });
-  return session;
+  // SDK embedding does not provide InteractiveMode bindings. Emit session_start in
+  // non-interactive mode so extensions can finish dynamic command/tool registration.
+  await session.bindExtensions({ mode: "print" });
+  return { session, extensionRuntime: extensionsResult.runtime };
+}
+
+async function makeSession(
+  resolved: ResolvedAiRoute,
+  system: string,
+  opts: { cwd?: string; withTools?: boolean } = {}
+): Promise<AgentSession> {
+  return (await makeSessionRuntime(resolved, system, opts)).session;
 }
 
 const MEMORY_EXTRACTION_SYSTEM_PROMPT = `你是小枢的长期记忆提取器。只从用户本轮明确表达或可直接支持的证据中提取未来仍有帮助的信息，不记录临时请求、寒暄、密码、令牌或助手自己的说法。
@@ -435,7 +435,7 @@ async function buildPrompt(
   const skillNames = requestContext?.skillNames ?? [];
   const skills =
     resolved.contextProfile.sources.skills.enabled && skillNames.length
-      ? (await listSkills()).filter((skill) => skillNames.includes(skill.name))
+      ? (await listSkills(resolved.contextProfile.id)).filter((skill) => skillNames.includes(skill.name))
       : [];
   const memory = resolved.contextProfile.sources.longTermMemory.enabled
     ? await MEMORY_ENGINE.context(
@@ -668,7 +668,11 @@ export async function runOneShot(
 
 /* ---------- 常驻小枢会话（带工具 + 全事件流式） ---------- */
 
-let assistant: { session: AgentSession; key: string } | null = null;
+let assistant: {
+  session: AgentSession;
+  extensionRuntime: ExtensionRuntime;
+  key: string;
+} | null = null;
 
 function configKey(
   resolved: ResolvedAiRoute,
@@ -684,6 +688,51 @@ function configKey(
     cwd,
     system,
   ].join("|");
+}
+
+async function ensureAssistantRuntime(
+  resolved: ResolvedAiRoute,
+  systemPrompt: string,
+  cwd: string
+): Promise<NonNullable<typeof assistant>> {
+  const key = configKey(resolved, systemPrompt, cwd);
+  if (assistant && assistant.key !== key) {
+    assistant.session.dispose();
+    assistant = null;
+  }
+  if (!assistant) {
+    const runtime = await makeSessionRuntime(resolved, systemPrompt, {
+      cwd,
+      withTools: true,
+    });
+    assistant = { ...runtime, key };
+  }
+  return assistant;
+}
+
+export async function listAssistantCapabilities(
+  projectId: string,
+  modelOverride?: AiModelRef
+): Promise<AssistantCapabilities> {
+  const normalizedProjectId = projectId || "default";
+  const cwd = workspaceDir(normalizedProjectId);
+  const resolved = await AI_RUNTIME.resolve("assistant", modelOverride);
+  const assembled = await buildPrompt(
+    resolved,
+    ASSISTANT_SYSTEM_PROMPT,
+    "",
+    undefined,
+    normalizedProjectId
+  );
+  const runtime = await ensureAssistantRuntime(resolved, assembled.systemPrompt, cwd);
+  return {
+    commands: runtime.extensionRuntime.getCommands().map((command) => ({
+      name: command.name,
+      description: command.description?.slice(0, 300) ?? "",
+      source: command.source,
+      sourceLabel: command.sourceInfo.source || command.sourceInfo.path,
+    })),
+  };
 }
 
 export async function assistantSend(
@@ -756,33 +805,38 @@ async function runAssistantTurn(
     requestContext,
     projectId
   );
-  const key = configKey(resolved, assembled.systemPrompt, cwd);
-  if (assistant && assistant.key !== key) {
-    assistant.session.dispose();
-    assistant = null;
-  }
-  if (!assistant) {
-    assistant = {
-      session: await makeSession(resolved, assembled.systemPrompt, {
-        cwd,
-        withTools: true,
-      }),
-      key,
-    };
-  }
-  const { session } = assistant;
+  const assistantRuntime = await ensureAssistantRuntime(
+    resolved,
+    assembled.systemPrompt,
+    cwd
+  );
+  const { session } = assistantRuntime;
   lifecycle.session = session;
   if (lifecycle.aborted) {
     await session.abort();
     emit({ type: "aborted" });
     return;
   }
-  const prepared = await prepareAttachments(
-    cwd,
-    assembled.message,
-    attachments,
-    resolved.contextProfile
+  const slashName = message.trim().match(/^\/([^\s/]+)/)?.[1];
+  const isPiCommand = Boolean(
+    slashName &&
+      assistantRuntime.extensionRuntime
+        .getCommands()
+        .some((command) => command.name === slashName)
   );
+  if (isPiCommand && attachments.length > 0) {
+    throw new Error("Pi 指令暂不支持同时附加文件");
+  }
+  // Pi commands must remain the first token. App context blocks would hide the
+  // slash command from AgentSession.prompt() command/template/skill expansion.
+  const prepared = isPiCommand
+    ? { message: message.trim(), images: [], attachments: [] }
+    : await prepareAttachments(
+        cwd,
+        assembled.message,
+        attachments,
+        resolved.contextProfile
+      );
   if (prepared.attachments.length > 0) {
     emit({ type: "attachments", attachments: prepared.attachments });
   }
@@ -862,7 +916,7 @@ async function runAssistantTurn(
       return;
     }
     const finalText = turn.finish();
-    if (!finalText) throw new Error("模型返回了空回复");
+    if (!finalText && !isPiCommand) throw new Error("模型返回了空回复");
     const usage = session.getContextUsage();
     if (usage) {
       emit({
@@ -875,13 +929,15 @@ async function runAssistantTurn(
       });
     }
     emit({ type: "done" });
-    void MEMORY_ENGINE.learnTurn({
-      requestId,
-      conversationId,
-      projectId,
-      userMessage: message,
-      assistantMessage: finalText,
-    });
+    if (finalText) {
+      void MEMORY_ENGINE.learnTurn({
+        requestId,
+        conversationId,
+        projectId,
+        userMessage: message,
+        assistantMessage: finalText,
+      });
+    }
   } catch (err) {
     if (lifecycle.aborted) {
       emit({ type: "aborted" });

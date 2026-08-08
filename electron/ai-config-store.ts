@@ -28,6 +28,10 @@ export const AI_CATALOG_CACHE_DIR = path.join(
   "catalog-cache"
 );
 export const AI_SKILLS_DIR = path.join(MAILUO_AI_HOME, "skills");
+/** 应用独立管理的 pi package 安装根目录。 */
+export const AI_PI_PACKAGES_DIR = path.join(MAILUO_AI_HOME, "packages");
+/** skills.sh 安装的受控工作目录根目录。 */
+export const AI_SKILLS_SH_DIR = path.join(MAILUO_AI_HOME, "skills-sh");
 
 const credentialSchema = z.discriminatedUnion("type", [
   z
@@ -205,6 +209,8 @@ export class AiConfigStore {
   readonly authPath: string;
   readonly catalogCacheDir: string;
   readonly skillsDir: string;
+  readonly packagesDir: string;
+  readonly skillsShDir: string;
   readonly credentials: MailuoCredentialStore;
 
   constructor(readonly root = MAILUO_AI_HOME) {
@@ -212,6 +218,8 @@ export class AiConfigStore {
     this.authPath = path.join(root, "auth.json");
     this.catalogCacheDir = path.join(root, "catalog-cache");
     this.skillsDir = path.join(root, "skills");
+    this.packagesDir = path.join(root, "packages");
+    this.skillsShDir = path.join(root, "skills-sh");
     this.credentials = new MailuoCredentialStore(this.authPath);
   }
 
@@ -220,6 +228,8 @@ export class AiConfigStore {
       fs.mkdir(this.root, { recursive: true }),
       fs.mkdir(this.catalogCacheDir, { recursive: true }),
       fs.mkdir(this.skillsDir, { recursive: true }),
+      fs.mkdir(this.packagesDir, { recursive: true }),
+      fs.mkdir(this.skillsShDir, { recursive: true }),
     ]);
   }
 

@@ -54,6 +54,7 @@ import {
 } from "./attachments";
 import { getSkills, type SkillInfo } from "./skills";
 import type { AssetRecord } from "@/shared/assets";
+import type { AssistantCapabilities } from "@/shared/pi-capabilities";
 import type {
   AssistantMention,
   BrowserTabInfo,
@@ -64,28 +65,19 @@ import {
   mentionKey,
   mentionLabel,
 } from "./mentions";
+import {
+  buildSlashCandidates,
+  type SlashCandidate,
+} from "./slashCommands";
 
-/* ---------- 内置快捷指令（/） ---------- */
-
-export interface SlashSkill {
-  name: string;
-  hint: string;
-  template: string;
+function ResourceSourceBadge({
+  source,
+}: {
+  source: "extension" | "prompt" | "skill";
+}) {
+  const label = { extension: "扩展", prompt: "Prompt", skill: "Skill" }[source];
+  return <Badge variant="outline" className="shrink-0 px-1.5 text-[9px] font-normal">{label}</Badge>;
 }
-
-export const SLASH_SKILLS: SlashSkill[] = [
-  { name: "看板", hint: "生成项目执行看板", template: "给我一个这个项目的执行看板，用结构化界面呈现。" },
-  { name: "规划", hint: "从目标规划任务", template: "请基于以下目标为本项目规划任务与依赖关系：" },
-  { name: "拆解", hint: "拆解某个任务", template: "请把「」拆解为可执行的子步骤，并给出先后依赖。" },
-  { name: "周报", hint: "生成进展周报", template: "根据任务快照，用 markdown 写一份本项目的进展周报（已完成 / 进行中 / 受阻与风险 / 下一步）。" },
-  { name: "风险", hint: "分析瓶颈与关键路径", template: "分析当前项目的关键路径与风险：哪些受阻任务影响面最大？先解决什么收益最高？" },
-  {
-    name: "图表",
-    hint: "生成项目可视化分析",
-    template:
-      "基于当前任务快照做一次可视化分析：选择最合适的图表展示进度、构成或风险，并先指出最值得关注的结论。",
-  },
-];
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -146,7 +138,7 @@ function ContextUsageRing({ usage }: { usage?: AssistantContextUsage }) {
   );
 }
 
-/** 现代 agent 式输入区：@任务引用、/快捷指令、模型选择、测试连接 */
+/** 现代 agent 式输入区：@任务引用、Pi runtime 指令、模型选择、附件 */
 export function Composer({
   tasks,
   busy,
@@ -174,6 +166,7 @@ export function Composer({
 }) {
   const { t } = useTranslation();
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
+  const selectedProjectId = useAppStore((s) => s.selectedProjectId);
 
   const [input, setInput] = useState("");
   const [mentions, setMentions] = useState<AssistantMention[]>([]);
@@ -181,6 +174,8 @@ export function Composer({
   const [menu, setMenu] = useState<"none" | "mention" | "slash" | "skill" | "asset">("none");
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [usedSkills, setUsedSkills] = useState<string[]>([]);
+  const [capabilities, setCapabilities] = useState<AssistantCapabilities | null>(null);
+  const [capabilitiesLoading, setCapabilitiesLoading] = useState(false);
   const [assets, setAssets] = useState<AssetRecord[]>([]);
   const [referencedAssets, setReferencedAssets] = useState<AssetRecord[]>([]);
   const [query, setQuery] = useState("");
@@ -213,6 +208,33 @@ export function Composer({
     return bridge?.onBrowserTabsChanged(setBrowserTabs);
   }, []);
 
+  useEffect(() => {
+    setCapabilities(null);
+  }, [selectedProjectId, modelOverride?.providerId, modelOverride?.modelId]);
+
+  useEffect(() => {
+    const clear = () => setCapabilities(null);
+    window.addEventListener("mailuo-ai-runtime-changed", clear);
+    return () => window.removeEventListener("mailuo-ai-runtime-changed", clear);
+  }, []);
+
+  const loadCapabilities = async (force = false) => {
+    if (!bridge || capabilitiesLoading || (capabilities && !force)) return;
+    setCapabilitiesLoading(true);
+    try {
+      setCapabilities(
+        await bridge.listAssistantCapabilities(
+          selectedProjectId ?? "default",
+          modelOverride
+        )
+      );
+    } catch (error) {
+      toast.error("获取 Pi 指令失败", { description: String(error) });
+    } finally {
+      setCapabilitiesLoading(false);
+    }
+  };
+
   /* 自适应高度 */
   useEffect(() => {
     const ta = taRef.current;
@@ -235,6 +257,7 @@ export function Composer({
       setMenu("slash");
       setQuery(slash[1]);
       setHighlight(0);
+      void loadCapabilities(slash[1].length === 0);
       return;
     }
     const dollar = /(?:^|\s)\$([^\s$]*)$/.exec(before);
@@ -263,9 +286,7 @@ export function Composer({
     mentions,
     query
   );
-  const slashCandidates = SLASH_SKILLS.filter((s) =>
-    s.name.includes(query)
-  );
+  const slashCandidates = buildSlashCandidates(capabilities, query);
   const skillCandidates = skills
     .filter((s) => s.name.toLowerCase().includes(query.toLowerCase()))
     .slice(0, 8);
@@ -284,10 +305,10 @@ export function Composer({
     ta?.focus();
   };
 
-  const applySlash = (skill: SlashSkill) => {
-    setInput(skill.template);
+  const applySlash = (candidate: SlashCandidate) => {
     setMenu("none");
-    taRef.current?.focus();
+    setInput(`/${candidate.name} `);
+    queueMicrotask(() => taRef.current?.focus());
   };
 
   const applySkill = (skill: SkillInfo) => {
@@ -594,8 +615,8 @@ export function Composer({
       )}
 
       <div className="relative rounded-xl border bg-card focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-ring/40">
-        {menu !== "none" && menuItems.length > 0 && (
-          <div className="absolute bottom-full left-0 z-20 mb-1.5 w-72 overflow-hidden rounded-lg border bg-popover p-1 shadow-md">
+        {menu !== "none" && (menu === "slash" || menuItems.length > 0) && (
+          <div className="absolute bottom-full left-0 z-20 mb-1.5 max-h-72 w-72 overflow-y-auto rounded-lg border bg-popover p-1 shadow-md">
             <p className="px-2 py-1 text-[10px] tracking-wider text-muted-foreground">
               {menu === "mention"
                 ? t("browser.mentionHint")
@@ -603,7 +624,7 @@ export function Composer({
                   ? "引用 skill（~/.mailuo/ai/skills）"
                   : menu === "asset"
                     ? "引用项目资产（#）"
-                  : "快捷指令"}
+                  : "Pi 指令"}
             </p>
             {menu === "mention"
               ? (["task", "browser"] as const).map((group) => {
@@ -688,22 +709,27 @@ export function Composer({
                       </span>
                     </button>
                   ))
-                : slashCandidates.map((s, i) => (
-                  <button
-                    key={s.name}
-                    className={cn(
-                      "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm",
-                      i === highlight ? "bg-accent" : "hover:bg-accent/60"
-                    )}
-                    onMouseEnter={() => setHighlight(i)}
-                    onClick={() => applySlash(s)}
-                  >
-                    <span className="font-medium">/{s.name}</span>
-                    <span className="truncate text-xs text-muted-foreground">
-                      {s.hint}
-                    </span>
-                  </button>
-                ))}
+                : capabilitiesLoading
+                  ? <div className="flex items-center gap-2 px-2 py-3 text-xs text-muted-foreground"><Spinner />正在读取 Pi runtime…</div>
+                  : slashCandidates.length === 0
+                    ? <div className="px-2 py-3 text-xs text-muted-foreground">没有匹配的 Pi command</div>
+                    : slashCandidates.map((candidate, i) => (
+                      <button
+                        key={candidate.name}
+                        className={cn(
+                          "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm",
+                          i === highlight ? "bg-accent" : "hover:bg-accent/60"
+                        )}
+                        onMouseEnter={() => setHighlight(i)}
+                        onClick={() => applySlash(candidate)}
+                      >
+                        <span className="font-medium">/{candidate.name}</span>
+                        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                          {candidate.hint}
+                        </span>
+                        <ResourceSourceBadge source={candidate.source} />
+                      </button>
+                    ))}
           </div>
         )}
 
@@ -871,12 +897,13 @@ export function Composer({
           <Button
             variant="ghost"
             size="icon-sm"
-            aria-label="快捷指令"
+            aria-label="Pi 指令"
             className="size-6.5 text-muted-foreground hover:text-foreground"
             onClick={() => {
               setInput("/");
               setMenu("slash");
               setQuery("");
+              void loadCapabilities(true);
               taRef.current?.focus();
             }}
           >

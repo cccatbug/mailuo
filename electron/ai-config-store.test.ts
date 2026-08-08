@@ -42,6 +42,23 @@ describe("AiConfigStore", () => {
     ]);
   });
 
+  it("adds the pi resource defaults when loading a legacy config", async () => {
+    const root = await tempRoot();
+    const store = new AiConfigStore(root);
+    const legacy = createDefaultAiConfig() as Record<string, unknown>;
+    delete legacy.pi;
+    await writeFile(path.join(root, "config.json"), JSON.stringify(legacy), "utf8");
+
+    const snapshot = await store.load();
+
+    expect(snapshot.config.pi.packages).toEqual([]);
+    expect(snapshot.config.pi.extensionPaths).toEqual([]);
+    expect(snapshot.config.pi.skillPaths).toEqual([]);
+    expect(snapshot.config.pi.skillsSh.installs).toEqual([]);
+    expect(await stat(store.packagesDir)).toBeTruthy();
+    expect(await stat(store.skillsShDir)).toBeTruthy();
+  });
+
   it("rejects stale etags instead of overwriting an externally edited file", async () => {
     const root = await tempRoot();
     const store = new AiConfigStore(root);

@@ -13,6 +13,7 @@ import {
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { openBrowserAuthPopup, type PopupWindowOptions } from "./browser-popup";
+import { safeSendToWindow } from "./window-lifecycle";
 
 export const BROWSER_PARTITION = "persist:mailuo-browser";
 
@@ -186,13 +187,13 @@ export class BrowserSessionManager {
       }
       const startDownload = () => {
         item.setSavePath(target);
-        this.getParentWindow?.()?.webContents.send("browser:download", {
+        safeSendToWindow(this.getParentWindow?.() ?? null, "browser:download", {
           state: "started",
           filename: path.basename(target),
           path: target,
         });
         item.once("done", (_doneEvent, state) => {
-          this.getParentWindow?.()?.webContents.send("browser:download", {
+          safeSendToWindow(this.getParentWindow?.() ?? null, "browser:download", {
             state,
             filename: path.basename(target),
             path: target,
@@ -308,7 +309,7 @@ export class BrowserSessionManager {
       if (!shouldKeepBrowserPopup(details)) {
         const parent = this.getParentWindow?.();
         if (parent) {
-          parent.webContents.send("browser:open-tab", url);
+          safeSendToWindow(parent, "browser:open-tab", url);
           return { action: "deny" };
         }
       }
@@ -357,7 +358,8 @@ export class BrowserSessionManager {
           {
             label: "在新浏览器标签打开",
             click: () =>
-              this.getParentWindow?.()?.webContents.send(
+              safeSendToWindow(
+                this.getParentWindow?.() ?? null,
                 "browser:open-tab",
                 params.linkURL
               ),

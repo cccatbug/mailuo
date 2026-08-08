@@ -1,4 +1,5 @@
 import type { BrowserWindow } from "electron";
+import { safeSendToWindow } from "./window-lifecycle";
 import type {
   TaskCommand,
   TaskCommandAction,
@@ -41,11 +42,15 @@ class TaskRuntime {
         reject,
         timer,
       });
-      window.webContents.send("tasks:command", {
+      if (!safeSendToWindow(window, "tasks:command", {
         requestId,
         action,
         payload,
-      } satisfies TaskCommand);
+      } satisfies TaskCommand)) {
+        this.commands.delete(requestId);
+        clearTimeout(timer);
+        reject(new Error("工作区窗口已关闭"));
+      }
     });
   }
 

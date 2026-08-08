@@ -17,6 +17,7 @@ import type {
   RouteResolutionStatus,
 } from "@/shared/ai-config";
 import type { OneShotUseCase } from "@/shared/ai-prompts";
+import type { AssistantCapabilities } from "@/shared/pi-capabilities";
 import type {
   AssetLibrarySnapshot,
   AssetRecord,
@@ -39,6 +40,15 @@ import type {
   UpdateMemoryInput,
 } from "@/shared/memory";
 import type { TaskCommand } from "@/shared/task-commands";
+import type {
+  PiExtensionCatalogItem,
+  PiPackagePreview,
+  PiResourcesSnapshot,
+  PiResourceProgressEvent,
+  SkillsShCatalogItem,
+  SkillsShCommandResult,
+  SkillsShListResult,
+} from "@/shared/pi-resources";
 
 export interface BrowserSessionSnapshot {
   persistent: boolean;
@@ -125,6 +135,40 @@ export interface MailuoApi {
   listSkills: () => Promise<
     { name: string; description: string; content: string }[]
   >;
+  listAssistantCapabilities: (
+    projectId: string,
+    modelOverride?: AiModelRef
+  ) => Promise<AssistantCapabilities>;
+  listPiResources: () => Promise<PiResourcesSnapshot>;
+  refreshPiResources: () => Promise<PiResourcesSnapshot>;
+  cancelPiResourceOperation: () => Promise<void>;
+  searchPiExtensions: (query: string) => Promise<PiExtensionCatalogItem[]>;
+  previewPiPackage: (source: string) => Promise<PiPackagePreview>;
+  installPiPackage: (source: string) => Promise<{ snapshot: AiConfigSnapshot; resources: PiResourcesSnapshot }>;
+  removePiPackage: (source: string) => Promise<{ snapshot: AiConfigSnapshot; resources: PiResourcesSnapshot }>;
+  setPiPackageEnabled: (source: string, enabled: boolean) => Promise<{ snapshot: AiConfigSnapshot; resources: PiResourcesSnapshot }>;
+  updatePiPackage: (source?: string) => Promise<{ snapshot: AiConfigSnapshot; resources: PiResourcesSnapshot }>;
+  addPiPath: (
+    kind: "extension" | "skill",
+    resourcePath: string,
+    sourceKind: "local" | "terminal" | "skills-sh",
+    label?: string
+  ) => Promise<{ snapshot: AiConfigSnapshot; resources: PiResourcesSnapshot }>;
+  removePiPath: (kind: "extension" | "skill", resourcePath: string) => Promise<{ snapshot: AiConfigSnapshot; resources: PiResourcesSnapshot }>;
+  setPiPathEnabled: (kind: "extension" | "skill", resourcePath: string, enabled: boolean) => Promise<{ snapshot: AiConfigSnapshot; resources: PiResourcesSnapshot }>;
+  setPiExtensionEnabled: (id: string, enabled: boolean) => Promise<{ snapshot: AiConfigSnapshot; resources: PiResourcesSnapshot }>;
+  setPiSkillProfiles: (id: string, profileIds: string[] | null) => Promise<{ snapshot: AiConfigSnapshot; resources: PiResourcesSnapshot }>;
+  pickPiPath: (kind: "extension" | "skill") => Promise<string | null>;
+  openPiResource: (resourcePath: string) => Promise<string>;
+  readPiSkill: (id: string) => Promise<string>;
+  writePiSkill: (id: string, content: string) => Promise<{ snapshot: AiConfigSnapshot; resources: PiResourcesSnapshot }>;
+  createPiSkill: (name: string, content?: string, root?: string) => Promise<{ snapshot: AiConfigSnapshot; resources: PiResourcesSnapshot }>;
+  searchSkillsSh: (query: string) => Promise<SkillsShCatalogItem[]>;
+  listSkillsSh: (source: string) => Promise<SkillsShListResult>;
+  installSkillsSh: (source: string, skillNames?: string[]) => Promise<{ snapshot: AiConfigSnapshot; resources: PiResourcesSnapshot; command: SkillsShCommandResult }>;
+  updateSkillsSh: (installId: string, skillNames?: string[]) => Promise<{ snapshot: AiConfigSnapshot; resources: PiResourcesSnapshot }>;
+  removeSkillsSh: (installId: string, skillNames?: string[]) => Promise<{ snapshot: AiConfigSnapshot; resources: PiResourcesSnapshot; command: SkillsShCommandResult }>;
+  onPiResourceProgress: (handler: (event: PiResourceProgressEvent) => void) => () => void;
   readFile: (p: string) => Promise<string>;
   readImageDataUrl: (p: string, mimeType: string) => Promise<string>;
   readDataUrl: (p: string, mimeType: string) => Promise<string>;

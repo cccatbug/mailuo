@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import {
+  BookOpen,
   Bot,
   BrainCircuit,
   Copy,
+  Code2,
   Cpu,
   Database,
   FolderOpen,
@@ -51,6 +53,7 @@ import { useAppStore } from "@/store/useAppStore";
 import type { ThemeMode, ThemePalette } from "@/lib/theme";
 import { seedData } from "@/store/seed";
 import { AiSettingsPane } from "./AiSettingsPane";
+import { PiResourcesPane } from "./PiResourcesPane";
 import { BrowserSettingsPane } from "./BrowserSettingsPane";
 import { AssistantSettingsPane } from "./AssistantSettingsPane";
 import { MemorySettingsPane } from "./MemorySettingsPane";
@@ -375,9 +378,19 @@ function AboutPane() {
 
 /* ---------- 主对话框：左导航 + 右内容（Obsidian 式浮空模态框） ---------- */
 
+function ExtensionsPane() {
+  return <PiResourcesPane kind="extension" />;
+}
+
+function SkillsPane() {
+  return <PiResourcesPane kind="skill" />;
+}
+
 const PANES = [
   { key: "appearance", label: "外观", icon: Palette, pane: AppearancePane },
   { key: "ai", label: "AI", icon: Cpu, pane: AiSettingsPane },
+  { key: "pi-extensions", label: "扩展", icon: Code2, pane: ExtensionsPane },
+  { key: "pi-skills", label: "技能", icon: BookOpen, pane: SkillsPane },
   { key: "assistant", label: "小枢", icon: Bot, pane: AssistantSettingsPane },
   { key: "memory", label: "记忆", icon: BrainCircuit, pane: MemorySettingsPane },
   { key: "browser", label: "浏览器", icon: Globe2, pane: BrowserSettingsPane },

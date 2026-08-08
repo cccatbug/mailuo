@@ -59,8 +59,10 @@ pnpm dist    # 打包（dmg / nsis / AppImage，图标在 build/）
 pnpm web     # 纯浏览器预览（localStorage 持久化，无 AI）
 ```
 
-> AI 配置完全独立于 pi CLI：`~/.mailuo/ai/config.json` 保存 Provider、模型库、用途路由与
-> 上下文策略，`~/.mailuo/ai/auth.json` 以 `0600` 权限保存凭据，模型发现缓存和应用 skills
-> 分别位于 `catalog-cache/` 与 `skills/`。应用不会读取或回退到 `~/.pi`、项目 `.pi`、
-> `~/.agents`、Provider 环境变量或登录 shell 凭据。代理只使用 AI 设置中的应用级网络配置。
+> AI 配置完全独立于 pi CLI：`~/.mailuo/ai/config.json` 保存 Provider、模型库、用途路由、
+> 上下文策略和资源开关，`~/.mailuo/ai/auth.json` 以 `0600` 权限保存凭据。应用管理的 pi
+> packages 位于 `~/.mailuo/ai/packages/`，skills.sh 的受控安装目录位于 `~/.mailuo/ai/skills-sh/`，
+> 应用 skills 位于 `skills/`。设置页可以登记终端已安装的 `.pi`/`.agents` 资源，但默认不会读取或
+> 回退到 `~/.pi`、项目 `.pi`、`~/.agents`、Provider 环境变量或登录 shell 凭据。代理只使用 AI
+> 设置中的应用级网络配置。
 > 旧 Tauri 版本的任务数据会在首次启动时自动迁移。

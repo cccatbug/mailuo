@@ -270,6 +270,65 @@ const contextSourceSchema = z
   })
   .strict();
 
+const piPackageConfigSchema = z
+  .object({
+    source: nonEmptyStringSchema,
+    enabled: z.boolean(),
+    installedPath: nonEmptyStringSchema.optional(),
+  })
+  .strict();
+
+const piPathConfigSchema = z
+  .object({
+    path: nonEmptyStringSchema,
+    enabled: z.boolean(),
+    sourceKind: z.enum(["local", "terminal", "skills-sh"]),
+    label: z.string().trim().optional(),
+  })
+  .strict();
+
+const skillsShInstallSchema = z
+  .object({
+    id: nonEmptyStringSchema,
+    source: nonEmptyStringSchema,
+    skillNames: z.array(nonEmptyStringSchema),
+    root: nonEmptyStringSchema,
+    createdAt: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export const aiPiConfigSchema = z
+  .object({
+    packages: z.array(piPackageConfigSchema).default([]),
+    extensionPaths: z.array(piPathConfigSchema).default([]),
+    skillPaths: z.array(piPathConfigSchema).default([]),
+    extensionOverrides: z.record(z.string(), z.boolean()).default({}),
+    skillProfileIds: z.record(z.string(), z.array(uuidSchema)).default({}),
+    skillsSh: z
+      .object({
+        installs: z.array(skillsShInstallSchema).default([]),
+      })
+      .strict()
+      .default({ installs: [] }),
+  })
+  .strict();
+
+export type AiPiConfig = z.infer<typeof aiPiConfigSchema>;
+export type AiPiPackageConfig = AiPiConfig["packages"][number];
+export type AiPiPathConfig = AiPiConfig["extensionPaths"][number];
+export type SkillsShInstall = AiPiConfig["skillsSh"]["installs"][number];
+
+export function createDefaultAiPiConfig(): AiPiConfig {
+  return {
+    packages: [],
+    extensionPaths: [],
+    skillPaths: [],
+    extensionOverrides: {},
+    skillProfileIds: {},
+    skillsSh: { installs: [] },
+  };
+}
+
 export const aiContextProfileSchema = z
   .object({
     id: uuidSchema,
@@ -333,6 +392,7 @@ export const aiConfigV1Schema = z
       })
       .strict(),
     contextProfiles: z.array(aiContextProfileSchema).min(1),
+    pi: aiPiConfigSchema.default(createDefaultAiPiConfig()),
     network: z
       .object({
         httpProxy: z.string(),
@@ -490,6 +550,7 @@ export function createDefaultAiConfig(): AiConfigV1 {
       "notes-polish": route(COMPACT_CONTEXT_PROFILE_ID),
     },
     contextProfiles,
+    pi: createDefaultAiPiConfig(),
     network: { httpProxy: "", httpsProxy: "", noProxy: "" },
   };
 }
@@ -537,6 +598,14 @@ export function validateAiConfigReferences(config: AiConfigV1): string[] {
     }
     if (route.model && !modelKeys.has(modelRefKey(route.model))) {
       issues.push(`用途「${useCase}」引用了不存在的模型`);
+    }
+  }
+
+  for (const [skillId, profileIds] of Object.entries(config.pi.skillProfileIds)) {
+    for (const profileId of profileIds) {
+      if (!contextIds.has(profileId)) {
+        issues.push(`Skill「${skillId}」引用了不存在的上下文配置档`);
+      }
     }
   }
   return issues;

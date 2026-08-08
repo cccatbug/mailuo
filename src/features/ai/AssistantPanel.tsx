@@ -1020,7 +1020,7 @@ export function AssistantPanel() {
               <br />
               我能操作任务、文件和你当前打开的内置浏览器标签页。
             </p>
-            <p className="text-xs">@ 引用任务或浏览器 · $ 引用 skill · / 快捷指令</p>
+            <p className="text-xs">@ 引用任务或浏览器 · $ 引用 skill · / Pi 指令</p>
           </div>
         ) : (
           <div className="flex flex-col gap-3">

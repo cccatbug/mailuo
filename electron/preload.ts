@@ -18,6 +18,7 @@ import type {
   RouteResolutionStatus,
 } from "../src/shared/ai-config";
 import type { OneShotUseCase } from "../src/shared/ai-prompts";
+import type { AssistantCapabilities } from "../src/shared/pi-capabilities";
 import type {
   AssetLibrarySnapshot,
   AssetRecord,
@@ -40,6 +41,15 @@ import type {
   UpdateMemoryInput,
 } from "../src/shared/memory";
 import type { TaskCommand } from "../src/shared/task-commands";
+import type {
+  PiExtensionCatalogItem,
+  PiPackagePreview,
+  PiResourcesSnapshot,
+  SkillsShCatalogItem,
+  SkillsShCommandResult,
+  SkillsShListResult,
+  PiResourceProgressEvent,
+} from "../src/shared/pi-resources";
 
 const api = {
   platform: process.platform as NodeJS.Platform,
@@ -150,6 +160,109 @@ const api = {
   listSkills: (): Promise<
     { name: string; description: string; content: string }[]
   > => ipcRenderer.invoke("agent:skills"),
+  listAssistantCapabilities: (
+    projectId: string,
+    modelOverride?: AiModelRef
+  ): Promise<AssistantCapabilities> =>
+    ipcRenderer.invoke("agent:capabilities", projectId, modelOverride),
+  listPiResources: (): Promise<PiResourcesSnapshot> =>
+    ipcRenderer.invoke("pi:resources:list"),
+  refreshPiResources: (): Promise<PiResourcesSnapshot> =>
+    ipcRenderer.invoke("pi:resources:refresh"),
+  cancelPiResourceOperation: (): Promise<void> =>
+    ipcRenderer.invoke("pi:resources:cancel"),
+  searchPiExtensions: (query: string): Promise<PiExtensionCatalogItem[]> =>
+    ipcRenderer.invoke("pi:extensions:search", query),
+  previewPiPackage: (source: string): Promise<PiPackagePreview> =>
+    ipcRenderer.invoke("pi:package:preview", source),
+  installPiPackage: (
+    source: string
+  ): Promise<{ snapshot: AiConfigSnapshot; resources: PiResourcesSnapshot }> =>
+    ipcRenderer.invoke("pi:package:install", source),
+  removePiPackage: (
+    source: string
+  ): Promise<{ snapshot: AiConfigSnapshot; resources: PiResourcesSnapshot }> =>
+    ipcRenderer.invoke("pi:package:remove", source),
+  setPiPackageEnabled: (
+    source: string,
+    enabled: boolean
+  ): Promise<{ snapshot: AiConfigSnapshot; resources: PiResourcesSnapshot }> =>
+    ipcRenderer.invoke("pi:package:set-enabled", source, enabled),
+  updatePiPackage: (
+    source?: string
+  ): Promise<{ snapshot: AiConfigSnapshot; resources: PiResourcesSnapshot }> =>
+    ipcRenderer.invoke("pi:package:update", source),
+  addPiPath: (
+    kind: "extension" | "skill",
+    resourcePath: string,
+    sourceKind: "local" | "terminal" | "skills-sh",
+    label?: string
+  ): Promise<{ snapshot: AiConfigSnapshot; resources: PiResourcesSnapshot }> =>
+    ipcRenderer.invoke("pi:path:add", kind, resourcePath, sourceKind, label),
+  removePiPath: (
+    kind: "extension" | "skill",
+    resourcePath: string
+  ): Promise<{ snapshot: AiConfigSnapshot; resources: PiResourcesSnapshot }> =>
+    ipcRenderer.invoke("pi:path:remove", kind, resourcePath),
+  setPiPathEnabled: (
+    kind: "extension" | "skill",
+    resourcePath: string,
+    enabled: boolean
+  ): Promise<{ snapshot: AiConfigSnapshot; resources: PiResourcesSnapshot }> =>
+    ipcRenderer.invoke("pi:path:set-enabled", kind, resourcePath, enabled),
+  setPiExtensionEnabled: (
+    id: string,
+    enabled: boolean
+  ): Promise<{ snapshot: AiConfigSnapshot; resources: PiResourcesSnapshot }> =>
+    ipcRenderer.invoke("pi:extension:set-enabled", id, enabled),
+  setPiSkillProfiles: (
+    id: string,
+    profileIds: string[] | null
+  ): Promise<{ snapshot: AiConfigSnapshot; resources: PiResourcesSnapshot }> =>
+    ipcRenderer.invoke("pi:skill:set-profiles", id, profileIds),
+  pickPiPath: (kind: "extension" | "skill"): Promise<string | null> =>
+    ipcRenderer.invoke("pi:path:pick", kind),
+  openPiResource: (resourcePath: string): Promise<string> =>
+    ipcRenderer.invoke("pi:resource:open", resourcePath),
+  readPiSkill: (id: string): Promise<string> =>
+    ipcRenderer.invoke("pi:skill:read", id),
+  writePiSkill: (
+    id: string,
+    content: string
+  ): Promise<{ snapshot: AiConfigSnapshot; resources: PiResourcesSnapshot }> =>
+    ipcRenderer.invoke("pi:skill:write", id, content),
+  createPiSkill: (
+    name: string,
+    content?: string,
+    root?: string
+  ): Promise<{ snapshot: AiConfigSnapshot; resources: PiResourcesSnapshot }> =>
+    ipcRenderer.invoke("pi:skill:create", name, content, root),
+  searchSkillsSh: (query: string): Promise<SkillsShCatalogItem[]> =>
+    ipcRenderer.invoke("pi:skills-sh:search", query),
+  listSkillsSh: (source: string): Promise<SkillsShListResult> =>
+    ipcRenderer.invoke("pi:skills-sh:list", source),
+  installSkillsSh: (
+    source: string,
+    skillNames?: string[]
+  ): Promise<{ snapshot: AiConfigSnapshot; resources: PiResourcesSnapshot; command: SkillsShCommandResult }> =>
+    ipcRenderer.invoke("pi:skills-sh:install", source, skillNames),
+  updateSkillsSh: (
+    installId: string,
+    skillNames?: string[]
+  ): Promise<{ snapshot: AiConfigSnapshot; resources: PiResourcesSnapshot }> =>
+    ipcRenderer.invoke("pi:skills-sh:update", installId, skillNames),
+  removeSkillsSh: (
+    installId: string,
+    skillNames?: string[]
+  ): Promise<{ snapshot: AiConfigSnapshot; resources: PiResourcesSnapshot; command: SkillsShCommandResult }> =>
+    ipcRenderer.invoke("pi:skills-sh:remove", installId, skillNames),
+  onPiResourceProgress: (
+    handler: (event: PiResourceProgressEvent) => void
+  ): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: PiResourceProgressEvent) => handler(value);
+    ipcRenderer.on("pi:resources:progress", listener);
+    return () => ipcRenderer.removeListener("pi:resources:progress", listener);
+  },
   readFile: (p: string): Promise<string> =>
     ipcRenderer.invoke("mailuo:read-file", p),
   readImageDataUrl: (p: string, mimeType: string): Promise<string> =>

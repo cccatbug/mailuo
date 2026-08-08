@@ -9,6 +9,7 @@ import {
   type BrowserControlWebContents,
 } from "./browser-control";
 import { BROWSER_PARTITION } from "./browser-session";
+import { safeSendToWindow } from "./window-lifecycle";
 import type {
   BrowserAgentMode,
   BrowserApprovalRequest,
@@ -181,10 +182,14 @@ class BrowserRuntime {
         reject(new Error("浏览器标签页命令超时"));
       }, 15_000);
       this.commands.set(requestId, { resolve, reject, timer });
-      window.webContents.send("browser:tab-command", {
+      if (!safeSendToWindow(window, "browser:tab-command", {
         requestId,
         ...command,
-      } satisfies BrowserTabCommand);
+      } satisfies BrowserTabCommand)) {
+        this.commands.delete(requestId);
+        clearTimeout(timer);
+        reject(new Error("工作区窗口已关闭"));
+      }
     });
   }
 
@@ -201,7 +206,11 @@ class BrowserRuntime {
         timer,
         tabId: request.tabId,
       });
-      window.webContents.send("browser:approval-request", request);
+      if (!safeSendToWindow(window, "browser:approval-request", request)) {
+        this.approvals.delete(request.id);
+        clearTimeout(timer);
+        resolve(false);
+      }
     });
   }
 
@@ -234,7 +243,7 @@ class BrowserRuntime {
   private broadcastTabs(): void {
     const window = this.getWindow();
     if (!window || window.isDestroyed()) return;
-    window.webContents.send("browser:tabs-changed", this.control.listTabs());
+    safeSendToWindow(window, "browser:tabs-changed", this.control.listTabs());
   }
 }
 
