@@ -16,6 +16,7 @@ import { bridge } from "@/lib/bridge";
 import { Md } from "@/features/ai/Markdown";
 import { useAppStore } from "@/store/useAppStore";
 import { ImageViewer } from "./ImageViewer";
+import { PdfViewer } from "./PdfViewer";
 import { fileEditorLanguage } from "./editor-language";
 
 const MonacoFileEditor = lazy(() =>
@@ -212,11 +213,7 @@ export function FileEditor({
           </div>
         )
       ) : isPdf && imageUrl ? (
-        <iframe
-          src={imageUrl}
-          title={path.split("/").pop() ?? "PDF"}
-          className="min-h-0 flex-1 border-0 bg-background"
-        />
+        <PdfViewer path={path} src={imageUrl} />
       ) : isVideo && imageUrl ? (
         <div className="flex min-h-0 flex-1 items-center justify-center bg-background p-5">
           <video src={imageUrl} controls className="max-h-full max-w-full rounded-lg" />
