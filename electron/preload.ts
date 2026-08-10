@@ -269,6 +269,8 @@ const api = {
     ipcRenderer.invoke("mailuo:read-image-data-url", p, mimeType),
   readDataUrl: (p: string, mimeType: string): Promise<string> =>
     ipcRenderer.invoke("mailuo:read-data-url", p, mimeType),
+  fileUrl: (p: string, mimeType: string): Promise<string> =>
+    ipcRenderer.invoke("mailuo:file-url", p, mimeType),
   writeFile: (p: string, content: string): Promise<void> =>
     ipcRenderer.invoke("mailuo:write-file", p, content),
   memoryPath: (): Promise<string> => ipcRenderer.invoke("mailuo:memory-path"),

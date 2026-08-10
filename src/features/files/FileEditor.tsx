@@ -88,9 +88,12 @@ export function FileEditor({
     const request =
       isImage
         ? bridge?.readImageDataUrl(path, normalizedMime)
-        : isMedia
-          ? bridge?.readDataUrl(path, normalizedMime)
-        : bridge?.readFile(path);
+        : isPdf
+          ? // PDF 走本地 HTTP 流式服务（Range 分块），避免 base64 整文件读入内存
+            bridge?.fileUrl(path, normalizedMime)
+          : isMedia
+            ? bridge?.readDataUrl(path, normalizedMime)
+            : bridge?.readFile(path);
     request
       ?.then((value) => {
         if (cancelled) return;

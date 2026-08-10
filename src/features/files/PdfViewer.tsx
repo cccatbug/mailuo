@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as pdfjsLib from "pdfjs-dist";
+import { TextLayer } from "pdfjs-dist";
 // Vite 把 worker 文件作为 URL 资源输出，避免在打包时把 worker inline 进主 bundle。
 import PdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import {
@@ -30,13 +31,21 @@ interface OutlineNode {
 interface PdfViewerProps {
   /** 本地文件路径，仅用于显示与日志 */
   path: string;
-  /** 文件的 data URL（与 FileEditor 既有读取方式保持一致） */
+  /** http(s) 流式 URL（本地文件服务，支持 Range）或 data: URL（web 回退） */
   src: string;
 }
 
 const MIN_SCALE = 0.25;
 const MAX_SCALE = 4;
 const SCALE_STEP = 1.2;
+/** 渲染窗口：中心页前后各渲染若干页（跟随滚动） */
+const RENDER_BEFORE = 2;
+const RENDER_AFTER = 5;
+/** 清理窗口：超出该范围（相对中心页）的页面会被移除，控制大 PDF 的 DOM/显存占用 */
+const EVICT_BEFORE = 6;
+const EVICT_AFTER = 10;
+/** 单个 canvas 的像素上限，避免超大页面在 HiDPI 下超过 GPU 纹理上限 */
+const MAX_CANVAS_PIXEL = 16384;
 
 export function PdfViewer({ path, src }: PdfViewerProps) {
   const fileName = useMemo(() => path.split(/[/\\]/).pop() ?? "PDF", [path]);
@@ -44,10 +53,28 @@ export function PdfViewer({ path, src }: PdfViewerProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const pagesRef = useRef<HTMLDivElement>(null);
   const pdfRef = useRef<pdfjsLib.PDFDocumentProxy | null>(null);
-  /** 已渲染的页 canvas 元素，按页码索引 */
-  const pageCanvasesRef = useRef<Map<number, HTMLCanvasElement>>(new Map());
-  /** 当前正在进行的渲染任务，切换缩放时取消，避免同 canvas 重叠渲染竞争 */
+  /** 已渲染的页包装元素（含 canvas 与文本层），按页码索引 */
+  const pageWrapsRef = useRef<Map<number, HTMLDivElement>>(new Map());
+  /** 每页渲染时所用的缩放，用于判断是否需要重绘 */
+  const renderedScaleRef = useRef<Map<number, number>>(new Map());
+  /** 每页的文本层实例（可取消） */
+  const textLayersRef = useRef<Map<number, TextLayer>>(new Map());
+  /** 当前正在进行的 canvas 渲染任务，切换缩放/清理时取消 */
   const currentRenderTaskRef = useRef<pdfjsLib.RenderTask | null>(null);
+  /** 渲染窗口的中心页，由滚动/跳页驱动 */
+  const centerRef = useRef(1);
+  /** 唤醒渲染主循环 */
+  const wakeRef = useRef<(() => void) | null>(null);
+  /** 目标页渲染完成后要滚动到的页 */
+  const pendingScrollRef = useRef<{ page: number; smooth: boolean } | null>(null);
+  /** 平均页高，用于滚动到空白区域时估算目标页 */
+  const avgPageHeightRef = useRef(0);
+  const numPagesRef = useRef(0);
+  const scrollRafRef = useRef(0);
+  const busyTimerRef = useRef<number | null>(null);
+  const currentPageRef = useRef(1);
+  /** 渲染代际：缩放/换文档时递增，用于区分“被新循环取消”与“真实渲染失败” */
+  const renderEpochRef = useRef(0);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -55,34 +82,65 @@ export function PdfViewer({ path, src }: PdfViewerProps) {
   const [outline, setOutline] = useState<OutlineNode[]>([]);
   const [scale, setScale] = useState(1.2);
   const [fitWidth, setFitWidth] = useState(true);
-  const [currentPage, setCurrentPage] = useState(1);
+  const [currentPage, setCurrentPageState] = useState(1);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activeOutlineKey, setActiveOutlineKey] = useState<string | null>(null);
   /** 容器实际可用宽度，用于 fitWidth 时重新计算缩放 */
   const [containerWidth, setContainerWidth] = useState(0);
+  /** 渲染忙（延迟显示，避免闪烁） */
+  const [busy, setBusy] = useState(false);
+  const [pageInput, setPageInput] = useState("1");
+  const pageInputFocusedRef = useRef(false);
+
+  const setCurrentPage = useCallback((n: number) => {
+    currentPageRef.current = n;
+    setCurrentPageState(n);
+  }, []);
 
   // ---------- 加载文档 ----------
   useEffect(() => {
     let cancelled = false;
     let pdf: pdfjsLib.PDFDocumentProxy | null = null;
+    let loadingTask: pdfjsLib.PDFDocumentLoadingTask | null = null;
     setLoading(true);
     setError(null);
     setOutline([]);
     setNumPages(0);
-    pageCanvasesRef.current.clear();
+    numPagesRef.current = 0;
+    setCurrentPage(1);
+    centerRef.current = 1;
+    pendingScrollRef.current = null;
+    avgPageHeightRef.current = 0;
+    // 清理上一个文档的渲染现场（旧 canvas/文本层可能残留到新文档里）
+    renderEpochRef.current++;
+    currentRenderTaskRef.current?.cancel();
+    currentRenderTaskRef.current = null;
+    textLayersRef.current.forEach((t) => t.cancel());
+    textLayersRef.current.clear();
+    pageWrapsRef.current.forEach((w) => w.remove());
+    pageWrapsRef.current.clear();
+    renderedScaleRef.current.clear();
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
 
     (async () => {
       try {
-        const data = await fetch(src).then((r) => r.arrayBuffer());
-        if (cancelled) return;
-        const task = pdfjsLib.getDocument({ data });
-        pdf = await task.promise;
+        if (src.startsWith("data:")) {
+          // web 回退：整文件读入内存
+          const data = await fetch(src).then((r) => r.arrayBuffer());
+          if (cancelled) return;
+          loadingTask = pdfjsLib.getDocument({ data });
+        } else {
+          // 流式加载：pdf.js 通过 Range 按需拉取，大文件也能打开
+          loadingTask = pdfjsLib.getDocument({ url: src });
+        }
+        pdf = await loadingTask.promise;
         if (cancelled) {
           pdf.destroy();
           return;
         }
         pdfRef.current = pdf;
         setNumPages(pdf.numPages);
+        numPagesRef.current = pdf.numPages;
 
         // 解析大纲并预解析目标页码
         const rawOutline = await pdf.getOutline();
@@ -99,38 +157,197 @@ export function PdfViewer({ path, src }: PdfViewerProps) {
 
     return () => {
       cancelled = true;
-      pdf?.destroy();
       pdfRef.current = null;
+      loadingTask?.destroy();
+      pdf?.destroy();
     };
-  }, [src]);
+  }, [src, setCurrentPage]);
 
-  // ---------- 渲染页面 ----------
-  const renderPage = useCallback(
-    async (canvas: HTMLCanvasElement, pageNum: number, pdf: pdfjsLib.PDFDocumentProxy, renderScale: number) => {
-      const page = await pdf.getPage(pageNum);
-      const viewport = page.getViewport({ scale: renderScale });
-      const outputScale = window.devicePixelRatio || 1;
+  // ---------- 单页渲染（canvas + 文本层） ----------
+  const renderPage = useCallback(async (pageNum: number, renderScale: number) => {
+    const pdf = pdfRef.current;
+    const pages = pagesRef.current;
+    if (!pdf || !pages) return;
+    const epoch = renderEpochRef.current;
 
-      canvas.width = Math.floor(viewport.width * outputScale);
-      canvas.height = Math.floor(viewport.height * outputScale);
-      canvas.style.width = `${Math.floor(viewport.width)}px`;
-      canvas.style.height = `${Math.floor(viewport.height)}px`;
+    const page = await pdf.getPage(pageNum);
+    if (!pdfRef.current || epoch !== renderEpochRef.current) return;
+    const viewport = page.getViewport({ scale: renderScale });
+    const outputScale =
+      window.devicePixelRatio || 1;
+    const safeDpr =
+      viewport.width * outputScale > MAX_CANVAS_PIXEL ||
+      viewport.height * outputScale > MAX_CANVAS_PIXEL
+        ? Math.max(1, Math.floor(Math.min(MAX_CANVAS_PIXEL / viewport.width, MAX_CANVAS_PIXEL / viewport.height)))
+        : outputScale;
 
-      const transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : undefined;
-      const renderTask = page.render({ canvas, viewport, transform });
-      currentRenderTaskRef.current = renderTask;
-      try {
-        await renderTask.promise;
-      } catch {
-        // 被取消或竞态，忽略
-      } finally {
-        if (currentRenderTaskRef.current === renderTask) currentRenderTaskRef.current = null;
+    let wrap = pageWrapsRef.current.get(pageNum);
+    if (!wrap) {
+      wrap = document.createElement("div");
+      wrap.className = "pdf-page-wrap";
+      wrap.dataset.pageNumber = String(pageNum);
+      const canvas = document.createElement("canvas");
+      canvas.className = "pdf-page-canvas";
+      wrap.append(canvas);
+      const textDiv = document.createElement("div");
+      textDiv.className = "textLayer";
+      wrap.append(textDiv);
+      pageWrapsRef.current.set(pageNum, wrap);
+      // 按页码升序插入，保证向后滚动时 DOM 顺序依然正确
+      const nextSibling =
+        Array.from(pages.children).find(
+          (el) => Number((el as HTMLElement).dataset.pageNumber) > pageNum,
+        ) ?? null;
+      pages.insertBefore(wrap, nextSibling);
+    }
+    // 文本层按 --scale-factor 布局，必须先于 TextLayer 构造设置
+    wrap.style.setProperty("--scale-factor", String(renderScale));
+
+    const canvas = wrap.querySelector<HTMLCanvasElement>("canvas")!;
+    canvas.width = Math.floor(viewport.width * safeDpr);
+    canvas.height = Math.floor(viewport.height * safeDpr);
+    canvas.style.width = `${Math.floor(viewport.width)}px`;
+    canvas.style.height = `${Math.floor(viewport.height)}px`;
+    const transform = safeDpr !== 1 ? [safeDpr, 0, 0, safeDpr, 0, 0] : undefined;
+    const renderTask = page.render({ canvas, viewport, transform });
+    currentRenderTaskRef.current = renderTask;
+    let renderFailed = false;
+    try {
+      await renderTask.promise;
+    } catch {
+      renderFailed = true;
+    }
+    if (currentRenderTaskRef.current === renderTask) currentRenderTaskRef.current = null;
+    if (!pdfRef.current || pageWrapsRef.current.get(pageNum) !== wrap) return;
+    if (renderFailed) {
+      if (epoch !== renderEpochRef.current) return; // 被新渲染循环取消：交给新循环重试
+      // 真实渲染失败：标记为已尝试，避免无限重试；缩放变化时会自然重试
+      renderedScaleRef.current.set(pageNum, renderScale);
+      return;
+    }
+
+    // 文本层：透明文本覆盖在 canvas 上，支持选中复制
+    textLayersRef.current.get(pageNum)?.cancel();
+    const textDiv = wrap.querySelector<HTMLDivElement>(".textLayer")!;
+    textDiv.replaceChildren();
+    const textLayer = new TextLayer({
+      textContentSource: page.streamTextContent(),
+      container: textDiv,
+      viewport,
+    });
+    textLayersRef.current.set(pageNum, textLayer);
+    try {
+      await textLayer.render();
+    } catch {
+      /* 文本层失败不影响画布展示 */
+    }
+    renderedScaleRef.current.set(pageNum, renderScale);
+
+    const h = wrap.getBoundingClientRect().height;
+    avgPageHeightRef.current = avgPageHeightRef.current
+      ? avgPageHeightRef.current * 0.8 + h * 0.2
+      : h;
+  }, []);
+
+  const removePage = useCallback((pageNum: number) => {
+    textLayersRef.current.get(pageNum)?.cancel();
+    textLayersRef.current.delete(pageNum);
+    renderedScaleRef.current.delete(pageNum);
+    pageWrapsRef.current.get(pageNum)?.remove();
+    pageWrapsRef.current.delete(pageNum);
+  }, []);
+
+  // ---------- 跳转到指定页 ----------
+  const scrollToPageElement = useCallback((pageNum: number, smooth: boolean) => {
+    const wrap = pageWrapsRef.current.get(pageNum);
+    const scroll = scrollRef.current;
+    if (!wrap || !scroll) return;
+    const top =
+      wrap.getBoundingClientRect().top - scroll.getBoundingClientRect().top + scroll.scrollTop;
+    scroll.scrollTo({ top: top - 12, behavior: smooth ? "smooth" : "auto" });
+    setCurrentPage(pageNum);
+  }, [setCurrentPage]);
+
+  const scrollToPage = useCallback(
+    (pageNum: number, smooth = true) => {
+      const n = Math.max(1, Math.min(numPagesRef.current || 1, pageNum));
+      const wrap = pageWrapsRef.current.get(n);
+      if (wrap) {
+        scrollToPageElement(n, smooth);
+      } else {
+        // 目标页尚未渲染：渲染窗口移到该页，渲染完成后再滚动
+        pendingScrollRef.current = { page: n, smooth };
+        centerRef.current = n;
+        wakeRef.current?.();
       }
+      setCurrentPage(n);
     },
-    [],
+    [scrollToPageElement],
   );
 
-  // ---------- 实际渲染（由 scale / fitWidth / 容器宽度 触发） ----------
+  // ---------- 窗口渲染：渲染中心页附近的缺页，清理远处页面 ----------
+  const renderWindow = useCallback(
+    async (renderScale: number, isCancelled: () => boolean) => {
+      const pages = pagesRef.current;
+      if (!pages) return;
+      const numPages = numPagesRef.current;
+      let anyPending = true;
+
+      // 跟随滚动中心渲染窗口；中心漂移超过 1 页则按新中心重新取窗
+      while (anyPending) {
+        if (isCancelled()) return;
+        const center = centerRef.current;
+        const start = Math.max(1, center - RENDER_BEFORE);
+        const end = Math.min(numPages, center + RENDER_AFTER);
+        anyPending = false;
+        for (let i = start; i <= end; i++) {
+          if (isCancelled()) return;
+          if (Math.abs(centerRef.current - center) > 1) {
+            anyPending = true;
+            break;
+          }
+          if (pageWrapsRef.current.has(i) && renderedScaleRef.current.get(i) === renderScale) {
+            continue;
+          }
+          if (!anyPending) {
+            anyPending = true;
+            if (busyTimerRef.current == null) {
+              busyTimerRef.current = window.setTimeout(() => setBusy(true), 150);
+            }
+          }
+          try {
+            await renderPage(i, renderScale);
+          } catch {
+            /* 单页失败不阻塞其余页面 */
+          }
+        }
+      }
+
+      if (isCancelled()) return;
+      const center = centerRef.current;
+      for (const pageNum of Array.from(pageWrapsRef.current.keys())) {
+        if (pageNum < center - EVICT_BEFORE || pageNum > center + EVICT_AFTER) {
+          removePage(pageNum);
+        }
+      }
+
+      if (busyTimerRef.current != null) {
+        clearTimeout(busyTimerRef.current);
+        busyTimerRef.current = null;
+        setBusy(false);
+      }
+
+      // 跳页请求：目标页渲染完成后再滚动
+      const pending = pendingScrollRef.current;
+      if (pending && pageWrapsRef.current.has(pending.page)) {
+        pendingScrollRef.current = null;
+        scrollToPageElement(pending.page, pending.smooth);
+      }
+    },
+    [removePage, renderPage, scrollToPageElement],
+  );
+
+  // ---------- 渲染主循环（由 loading / scale / fitWidth / 容器宽度 触发） ----------
   useEffect(() => {
     const pdf = pdfRef.current;
     const pages = pagesRef.current;
@@ -138,8 +355,9 @@ export function PdfViewer({ path, src }: PdfViewerProps) {
     if (!pdf || !pages || !scroll || loading) return;
 
     let cancelled = false;
+    let renderScale = scale;
+
     (async () => {
-      let renderScale = scale;
       if (fitWidth) {
         // 以第一页宽度为基准，适配容器宽度
         try {
@@ -156,32 +374,27 @@ export function PdfViewer({ path, src }: PdfViewerProps) {
           /* ignore */
         }
       }
+      if (cancelled) return;
 
-      // 顺序渲染每一页，避免并发导致 canvas 竞争
-      for (let i = 1; i <= pdf.numPages; i++) {
+      while (!cancelled) {
+        await renderWindow(renderScale, () => cancelled);
         if (cancelled) return;
-        let canvas = pageCanvasesRef.current.get(i);
-        if (!canvas) {
-          canvas = document.createElement("canvas");
-          canvas.className = "pdf-page-canvas";
-          canvas.dataset.pageNumber = String(i);
-          pageCanvasesRef.current.set(i, canvas);
-          pages.appendChild(canvas);
-        }
-        try {
-          await renderPage(canvas, i, pdf, renderScale);
-        } catch (e) {
-          if (!cancelled) console.error("渲染页面失败", i, e);
-        }
+        // 空闲：等待滚动/跳页唤醒
+        await new Promise<void>((resolve) => {
+          wakeRef.current = resolve;
+        });
       }
     })();
 
     return () => {
       cancelled = true;
+      renderEpochRef.current++;
       currentRenderTaskRef.current?.cancel();
+      wakeRef.current?.();
+      wakeRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, fitWidth, scale, containerWidth, renderPage]);
+  }, [loading, fitWidth, scale, containerWidth, src, renderWindow]);
 
   // 监听滚动容器宽度变化（侧边栏开关 / 窗口缩放）以重新适配宽度
   useEffect(() => {
@@ -194,35 +407,83 @@ export function PdfViewer({ path, src }: PdfViewerProps) {
     return () => ro.disconnect();
   }, [loading]);
 
-  // ---------- 滚动时同步当前页码 ----------
+  // ---------- 滚动：同步页码 + 驱动渲染窗口 ----------
   const handleScroll = useCallback(() => {
-    const scroll = scrollRef.current;
-    const pages = pagesRef.current;
-    if (!scroll || !pages) return;
-    const canvases = Array.from(
-      pages.querySelectorAll<HTMLCanvasElement>(".pdf-page-canvas"),
-    );
-    const containerTop = scroll.scrollTop + scroll.clientHeight * 0.35;
-    for (const canvas of canvases) {
-      const top = canvas.offsetTop;
-      const bottom = top + canvas.offsetHeight;
-      if (top <= containerTop && bottom > containerTop) {
-        const pageNum = Number(canvas.dataset.pageNumber);
-        if (pageNum) setCurrentPage(pageNum);
-        return;
-      }
-    }
-  }, []);
+    cancelAnimationFrame(scrollRafRef.current);
+    scrollRafRef.current = requestAnimationFrame(() => {
+      const scroll = scrollRef.current;
+      const pages = pagesRef.current;
+      if (!scroll || !pages) return;
+      const line = scroll.scrollTop + scroll.clientHeight * 0.35;
+      const scrollTop = scroll.getBoundingClientRect().top;
+      const wraps = Array.from(pages.querySelectorAll<HTMLDivElement>(".pdf-page-wrap"));
 
-  // ---------- 跳转到指定页 ----------
-  const scrollToPage = useCallback((pageNum: number) => {
-    const canvas = pageCanvasesRef.current.get(pageNum);
-    const scroll = scrollRef.current;
-    if (canvas && scroll) {
-      scroll.scrollTo({ top: canvas.offsetTop - 12, behavior: "smooth" });
-      setCurrentPage(pageNum);
-    }
-  }, []);
+      let center = 1;
+      let found = false;
+      let lastNum = 1;
+      let lastBottom = 0;
+      for (const wrap of wraps) {
+        const pageNum = Number(wrap.dataset.pageNumber);
+        const top = wrap.getBoundingClientRect().top - scrollTop + scroll.scrollTop;
+        const bottom = top + wrap.offsetHeight;
+        if (top <= line && line < bottom) {
+          center = pageNum;
+          found = true;
+          break;
+        }
+        if (bottom > lastBottom) {
+          lastBottom = bottom;
+          lastNum = pageNum;
+        }
+      }
+      if (!found && lastBottom > 0) {
+        // 视口落在未渲染的空白区：按平均页高估算目标页
+        const estimate = lastNum + Math.ceil((line - lastBottom) / Math.max(80, avgPageHeightRef.current));
+        center = Math.max(1, Math.min(numPagesRef.current || 1, estimate));
+      }
+
+      centerRef.current = center;
+      setCurrentPage(center);
+      wakeRef.current?.();
+    });
+  }, [setCurrentPage]);
+
+  // ---------- 键盘导航 ----------
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      const target = e.target as HTMLElement;
+      if (target.closest("button, input, a, [contenteditable]")) return;
+      const total = numPagesRef.current || 1;
+      switch (e.key) {
+        case "PageDown":
+        case " ":
+          e.preventDefault();
+          scrollToPage(currentPageRef.current + 1, false);
+          break;
+        case "PageUp":
+          e.preventDefault();
+          scrollToPage(currentPageRef.current - 1, false);
+          break;
+        case "Home":
+          e.preventDefault();
+          scrollToPage(1, false);
+          break;
+        case "End":
+          e.preventDefault();
+          scrollToPage(total, false);
+          break;
+        case "ArrowDown":
+          e.preventDefault();
+          scrollRef.current?.scrollBy({ top: 80, behavior: "smooth" });
+          break;
+        case "ArrowUp":
+          e.preventDefault();
+          scrollRef.current?.scrollBy({ top: -80, behavior: "smooth" });
+          break;
+      }
+    },
+    [scrollToPage],
+  );
 
   const zoom = (updater: (s: number) => number) => {
     setFitWidth(false);
@@ -233,6 +494,21 @@ export function PdfViewer({ path, src }: PdfViewerProps) {
     setFitWidth(true);
     setScale(1.2);
   };
+
+  const applyPageInput = () => {
+    const n = Number(pageInput);
+    const total = numPagesRef.current || 1;
+    if (Number.isInteger(n) && n >= 1 && n <= total) {
+      scrollToPage(n);
+    } else {
+      setPageInput(String(currentPageRef.current));
+    }
+  };
+
+  // 页码输入框与当前页同步（输入中除外）
+  useEffect(() => {
+    if (!pageInputFocusedRef.current) setPageInput(String(currentPage));
+  }, [currentPage]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-muted/30">
@@ -269,12 +545,22 @@ export function PdfViewer({ path, src }: PdfViewerProps) {
             type="number"
             min={1}
             max={numPages || 1}
-            value={currentPage}
-            onChange={(e) => {
-              const n = Number(e.target.value);
-              if (n >= 1 && n <= numPages) scrollToPage(n);
+            value={pageInput}
+            onFocus={() => {
+              pageInputFocusedRef.current = true;
+            }}
+            onBlur={() => {
+              pageInputFocusedRef.current = false;
+              applyPageInput();
+            }}
+            onChange={(e) => setPageInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                (e.target as HTMLInputElement).blur();
+              }
             }}
             className="h-6 w-12 rounded-md border bg-transparent px-1 text-center tabular-nums outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            aria-label="跳转到页码"
           />
           <span>/ {numPages || "-"}</span>
         </div>
@@ -286,29 +572,27 @@ export function PdfViewer({ path, src }: PdfViewerProps) {
       {/* 主体：左侧目录 + 右侧文档 */}
       <div className="flex min-h-0 flex-1">
         {sidebarOpen && (
-          <>
-            <aside className="flex w-64 shrink-0 flex-col border-r bg-background">
-              <div className="flex h-8 shrink-0 items-center px-3 text-xs font-medium text-muted-foreground">
-                目录
-              </div>
-              <ScrollArea className="min-h-0 flex-1">
-                {outline.length > 0 ? (
-                  <OutlineTree
-                    nodes={outline}
-                    activeKey={activeOutlineKey}
-                    onSelect={(node) => {
-                      setActiveOutlineKey(node.key);
-                      if (node.pageNumber) scrollToPage(node.pageNumber);
-                    }}
-                  />
-                ) : (
-                  <div className="px-3 py-4 text-xs text-muted-foreground">
-                    {loading ? "正在读取目录…" : "此 PDF 无目录"}
-                  </div>
-                )}
-              </ScrollArea>
-            </aside>
-          </>
+          <aside className="flex w-64 shrink-0 flex-col border-r bg-background">
+            <div className="flex h-8 shrink-0 items-center px-3 text-xs font-medium text-muted-foreground">
+              目录
+            </div>
+            <ScrollArea className="min-h-0 flex-1">
+              {outline.length > 0 ? (
+                <OutlineTree
+                  nodes={outline}
+                  activeKey={activeOutlineKey}
+                  onSelect={(node) => {
+                    setActiveOutlineKey(node.key);
+                    if (node.pageNumber) scrollToPage(node.pageNumber);
+                  }}
+                />
+              ) : (
+                <div className="px-3 py-4 text-xs text-muted-foreground">
+                  {loading ? "正在读取目录…" : "此 PDF 无目录"}
+                </div>
+              )}
+            </ScrollArea>
+          </aside>
         )}
 
         <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -326,7 +610,11 @@ export function PdfViewer({ path, src }: PdfViewerProps) {
             <div
               ref={scrollRef}
               onScroll={handleScroll}
-              className="h-full overflow-y-auto bg-muted/40"
+              onKeyDown={handleKeyDown}
+              tabIndex={0}
+              className="h-full overflow-y-auto bg-muted/40 outline-none"
+              role="region"
+              aria-label="PDF 文档区域（支持键盘翻页）"
             >
               <div
                 ref={pagesRef}
@@ -334,15 +622,56 @@ export function PdfViewer({ path, src }: PdfViewerProps) {
               />
             </div>
           )}
+          {busy && !loading && !error && (
+            <div className="pointer-events-none absolute bottom-3 right-3 flex items-center gap-1.5 rounded-full border bg-background/85 px-2.5 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur">
+              <Loader2 className="size-3 animate-spin" />
+              渲染中…
+            </div>
+          )}
         </div>
       </div>
 
       <style>{`
-        .pdf-page-canvas {
+        .pdf-page-wrap {
+          --user-unit: 1;
+          --scale-round-x: 1px;
+          --scale-round-y: 1px;
+          --total-scale-factor: calc(var(--scale-factor) * var(--user-unit));
+          position: relative;
           border-radius: 6px;
           box-shadow: 0 1px 6px rgba(0,0,0,0.18), 0 0 0 1px rgba(0,0,0,0.05);
           background: #fff;
+        }
+        .pdf-page-canvas {
+          border-radius: 6px;
           display: block;
+        }
+        .pdf-page-wrap .textLayer {
+          position: absolute;
+          inset: 0;
+          overflow: clip;
+          opacity: 1;
+          line-height: 1;
+          -webkit-text-size-adjust: none;
+          text-size-adjust: none;
+          forced-color-adjust: none;
+          transform-origin: 0 0;
+          caret-color: CanvasText;
+          z-index: 0;
+        }
+        .pdf-page-wrap .textLayer :is(span, br) {
+          color: transparent;
+          position: absolute;
+          white-space: pre;
+          cursor: text;
+          transform-origin: 0% 0%;
+        }
+        .pdf-page-wrap .textLayer ::selection {
+          background: rgba(0 0 255 / 0.25);
+          background: color-mix(in srgb, AccentColor, transparent 75%);
+        }
+        .pdf-page-wrap .textLayer br::selection {
+          background: transparent;
         }
       `}</style>
     </div>

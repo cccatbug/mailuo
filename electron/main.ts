@@ -101,6 +101,7 @@ import {
   sendPiResourceProgress,
   showWindowWhenReady,
 } from "./window-lifecycle";
+import { FILE_SERVER } from "./file-server";
 
 const isMac = process.platform === "darwin";
 
@@ -860,6 +861,10 @@ function registerIpc() {
     (_e, p: string, mimeType: string) => readMailuoDataUrl(p, mimeType)
   );
   ipcMain.handle(
+    "mailuo:file-url",
+    (_e, p: string, mimeType: string) => FILE_SERVER.urlFor(p, mimeType)
+  );
+  ipcMain.handle(
     "ai:provider:save",
     async (
       _e,
@@ -1081,6 +1086,7 @@ if (!app.requestSingleInstanceLock()) {
 
   void app.whenReady().then(async () => {
     registerIpc();
+    app.on("will-quit", () => FILE_SERVER.close());
     BROWSER_SESSION.setAgentDownloadApproval((webContentsId, filename, url) =>
       BROWSER_RUNTIME.approveDownload(webContentsId, filename, url)
     );

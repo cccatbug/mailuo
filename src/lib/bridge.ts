@@ -172,6 +172,8 @@ export interface MailuoApi {
   readFile: (p: string) => Promise<string>;
   readImageDataUrl: (p: string, mimeType: string) => Promise<string>;
   readDataUrl: (p: string, mimeType: string) => Promise<string>;
+  /** 返回 ~/.mailuo 内文件的受控本地 HTTP URL（流式 + Range，供 PDF 等大文件使用） */
+  fileUrl: (p: string, mimeType: string) => Promise<string>;
   writeFile: (p: string, content: string) => Promise<void>;
   memoryPath: () => Promise<string>;
   memoryAppend: (note: string) => Promise<void>;
