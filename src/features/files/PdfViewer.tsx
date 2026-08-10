@@ -65,10 +65,16 @@ export function PdfViewer({ path, src }: PdfViewerProps) {
   const centerRef = useRef(1);
   /** 唤醒渲染主循环 */
   const wakeRef = useRef<(() => void) | null>(null);
-  /** 目标页渲染完成后要滚动到的页 */
-  const pendingScrollRef = useRef<{ page: number; smooth: boolean } | null>(null);
-  /** 平均页高，用于滚动到空白区域时估算目标页 */
-  const avgPageHeightRef = useRef(0);
+  /** 已测得的页宽（scale=1 归一化），用于占位尺寸 */
+  const baseWidthsRef = useRef<Map<number, number>>(new Map());
+  /** 已测得的页高（scale=1 归一化），用于占位尺寸 */
+  const baseHeightsRef = useRef<Map<number, number>>(new Map());
+  /** 未渲染页的估算占位尺寸（scale=1），随已渲染页逐步修正 */
+  const estBaseRef = useRef({ w: 595, h: 842 });
+  /** 占位尺寸当前对应的渲染缩放 */
+  const scaleAppliedRef = useRef(0);
+  /** 占位估算更新的 rAF 句柄 */
+  const estRafRef = useRef(0);
   const numPagesRef = useRef(0);
   const scrollRafRef = useRef(0);
   const busyTimerRef = useRef<number | null>(null);
@@ -109,8 +115,14 @@ export function PdfViewer({ path, src }: PdfViewerProps) {
     numPagesRef.current = 0;
     setCurrentPage(1);
     centerRef.current = 1;
-    pendingScrollRef.current = null;
-    avgPageHeightRef.current = 0;
+    baseWidthsRef.current.clear();
+    baseHeightsRef.current.clear();
+    estBaseRef.current = { w: 595, h: 842 };
+    scaleAppliedRef.current = 0;
+    if (estRafRef.current) {
+      cancelAnimationFrame(estRafRef.current);
+      estRafRef.current = 0;
+    }
     // 清理上一个文档的渲染现场（旧 canvas/文本层可能残留到新文档里）
     renderEpochRef.current++;
     currentRenderTaskRef.current?.cancel();
@@ -142,6 +154,16 @@ export function PdfViewer({ path, src }: PdfViewerProps) {
         setNumPages(pdf.numPages);
         numPagesRef.current = pdf.numPages;
 
+        // 取首页真实尺寸作为占位估算基准，让虚拟滚动条总高度尽量接近真实文档
+        try {
+          const firstViewport = (await pdf.getPage(1)).getViewport({ scale: 1 });
+          if (!cancelled) {
+            estBaseRef.current = { w: firstViewport.width, h: firstViewport.height };
+          }
+        } catch {
+          /* 保持默认 A4 尺寸 */
+        }
+
         // 解析大纲并预解析目标页码
         const rawOutline = await pdf.getOutline();
         if (cancelled) return;
@@ -163,6 +185,48 @@ export function PdfViewer({ path, src }: PdfViewerProps) {
     };
   }, [src, setCurrentPage]);
 
+  // ---------- 占位尺寸：为全部页按当前缩放定宽高，滚动总高度由总页数决定 ----------
+  const applySizes = useCallback((renderScale: number) => {
+    const n = numPagesRef.current;
+    if (!n) return;
+    scaleAppliedRef.current = renderScale;
+    const { w: ew, h: eh } = estBaseRef.current;
+    for (let i = 1; i <= n; i++) {
+      const wrap = pageWrapsRef.current.get(i);
+      if (!wrap) continue;
+      const bh = baseHeightsRef.current.get(i) ?? eh;
+      const bw = baseWidthsRef.current.get(i) ?? ew;
+      wrap.style.width = `${Math.floor(bw * renderScale)}px`;
+      wrap.style.height = `${Math.floor(bh * renderScale)}px`;
+    }
+  }, []);
+
+  /** 有新页测得真实尺寸后，rAF 去抖地修正估算值并刷新未渲染页占位 */
+  const scheduleEstimateUpdate = useCallback(() => {
+    if (estRafRef.current) return;
+    estRafRef.current = requestAnimationFrame(() => {
+      estRafRef.current = 0;
+      const hs = baseHeightsRef.current;
+      const ws = baseWidthsRef.current;
+      if (!hs.size) return;
+      let sh = 0;
+      let sw = 0;
+      hs.forEach((v) => (sh += v));
+      ws.forEach((v) => (sw += v));
+      estBaseRef.current = { h: sh / hs.size, w: sw / ws.size };
+      const s = scaleAppliedRef.current;
+      if (!s) return;
+      const { w: ew, h: eh } = estBaseRef.current;
+      for (let i = 1; i <= numPagesRef.current; i++) {
+        if (hs.has(i)) continue;
+        const wrap = pageWrapsRef.current.get(i);
+        if (!wrap) continue;
+        wrap.style.width = `${Math.floor(ew * s)}px`;
+        wrap.style.height = `${Math.floor(eh * s)}px`;
+      }
+    });
+  }, []);
+
   // ---------- 单页渲染（canvas + 文本层） ----------
   const renderPage = useCallback(async (pageNum: number, renderScale: number) => {
     const pdf = pdfRef.current;
@@ -181,29 +245,27 @@ export function PdfViewer({ path, src }: PdfViewerProps) {
         ? Math.max(1, Math.floor(Math.min(MAX_CANVAS_PIXEL / viewport.width, MAX_CANVAS_PIXEL / viewport.height)))
         : outputScale;
 
-    let wrap = pageWrapsRef.current.get(pageNum);
-    if (!wrap) {
-      wrap = document.createElement("div");
-      wrap.className = "pdf-page-wrap";
-      wrap.dataset.pageNumber = String(pageNum);
-      const canvas = document.createElement("canvas");
+    // 占位 wrapper 在加载后已全部创建，这里按需补上 canvas/文本层（回收时被移除，占位保留）
+    const wrap = pageWrapsRef.current.get(pageNum);
+    if (!wrap) return;
+    let canvas = wrap.querySelector<HTMLCanvasElement>("canvas");
+    if (!canvas) {
+      canvas = document.createElement("canvas");
       canvas.className = "pdf-page-canvas";
       wrap.append(canvas);
-      const textDiv = document.createElement("div");
+    }
+    let textDiv = wrap.querySelector<HTMLDivElement>(".textLayer");
+    if (!textDiv) {
+      textDiv = document.createElement("div");
       textDiv.className = "textLayer";
       wrap.append(textDiv);
-      pageWrapsRef.current.set(pageNum, wrap);
-      // 按页码升序插入，保证向后滚动时 DOM 顺序依然正确
-      const nextSibling =
-        Array.from(pages.children).find(
-          (el) => Number((el as HTMLElement).dataset.pageNumber) > pageNum,
-        ) ?? null;
-      pages.insertBefore(wrap, nextSibling);
     }
     // 文本层按 --scale-factor 布局，必须先于 TextLayer 构造设置
     wrap.style.setProperty("--scale-factor", String(renderScale));
+    // 占位尺寸与渲染结果完全一致，渲染完成时不会发生布局跳变
+    wrap.style.width = `${Math.floor(viewport.width)}px`;
+    wrap.style.height = `${Math.floor(viewport.height)}px`;
 
-    const canvas = wrap.querySelector<HTMLCanvasElement>("canvas")!;
     canvas.width = Math.floor(viewport.width * safeDpr);
     canvas.height = Math.floor(viewport.height * safeDpr);
     canvas.style.width = `${Math.floor(viewport.width)}px`;
@@ -228,7 +290,7 @@ export function PdfViewer({ path, src }: PdfViewerProps) {
 
     // 文本层：透明文本覆盖在 canvas 上，支持选中复制
     textLayersRef.current.get(pageNum)?.cancel();
-    const textDiv = wrap.querySelector<HTMLDivElement>(".textLayer")!;
+    textDiv = wrap.querySelector<HTMLDivElement>(".textLayer")!;
     textDiv.replaceChildren();
     const textLayer = new TextLayer({
       textContentSource: page.streamTextContent(),
@@ -243,18 +305,27 @@ export function PdfViewer({ path, src }: PdfViewerProps) {
     }
     renderedScaleRef.current.set(pageNum, renderScale);
 
-    const h = wrap.getBoundingClientRect().height;
-    avgPageHeightRef.current = avgPageHeightRef.current
-      ? avgPageHeightRef.current * 0.8 + h * 0.2
-      : h;
-  }, []);
+    // 记录该页真实尺寸（归一化到 scale=1），用于修正未渲染页的占位尺寸
+    if (!baseHeightsRef.current.has(pageNum)) {
+      baseHeightsRef.current.set(pageNum, viewport.height / renderScale);
+      baseWidthsRef.current.set(pageNum, viewport.width / renderScale);
+      scheduleEstimateUpdate();
+    }
+  }, [scheduleEstimateUpdate]);
 
   const removePage = useCallback((pageNum: number) => {
     textLayersRef.current.get(pageNum)?.cancel();
     textLayersRef.current.delete(pageNum);
     renderedScaleRef.current.delete(pageNum);
-    pageWrapsRef.current.get(pageNum)?.remove();
-    pageWrapsRef.current.delete(pageNum);
+    const wrap = pageWrapsRef.current.get(pageNum);
+    if (!wrap) return;
+    // 保留占位 wrapper：明确的宽高让滚动总高度不变，滚动条不抖动
+    wrap.replaceChildren();
+    const s = scaleAppliedRef.current || 1;
+    const bh = baseHeightsRef.current.get(pageNum) ?? estBaseRef.current.h;
+    const bw = baseWidthsRef.current.get(pageNum) ?? estBaseRef.current.w;
+    wrap.style.width = `${Math.floor(bw * s)}px`;
+    wrap.style.height = `${Math.floor(bh * s)}px`;
   }, []);
 
   // ---------- 跳转到指定页 ----------
@@ -271,18 +342,13 @@ export function PdfViewer({ path, src }: PdfViewerProps) {
   const scrollToPage = useCallback(
     (pageNum: number, smooth = true) => {
       const n = Math.max(1, Math.min(numPagesRef.current || 1, pageNum));
-      const wrap = pageWrapsRef.current.get(n);
-      if (wrap) {
-        scrollToPageElement(n, smooth);
-      } else {
-        // 目标页尚未渲染：渲染窗口移到该页，渲染完成后再滚动
-        pendingScrollRef.current = { page: n, smooth };
-        centerRef.current = n;
-        wakeRef.current?.();
-      }
+      // 占位恒存在，可直接跳转；渲染窗口随后由滚动位置驱动
+      scrollToPageElement(n, smooth);
+      centerRef.current = n;
+      wakeRef.current?.();
       setCurrentPage(n);
     },
-    [scrollToPageElement],
+    [scrollToPageElement, setCurrentPage],
   );
 
   // ---------- 窗口渲染：渲染中心页附近的缺页，清理远处页面 ----------
@@ -326,7 +392,11 @@ export function PdfViewer({ path, src }: PdfViewerProps) {
       if (isCancelled()) return;
       const center = centerRef.current;
       for (const pageNum of Array.from(pageWrapsRef.current.keys())) {
-        if (pageNum < center - EVICT_BEFORE || pageNum > center + EVICT_AFTER) {
+        // 仅回收已渲染的页；占位 wrapper 保留以维持滚动条稳定
+        if (
+          renderedScaleRef.current.has(pageNum) &&
+          (pageNum < center - EVICT_BEFORE || pageNum > center + EVICT_AFTER)
+        ) {
           removePage(pageNum);
         }
       }
@@ -337,14 +407,8 @@ export function PdfViewer({ path, src }: PdfViewerProps) {
         setBusy(false);
       }
 
-      // 跳页请求：目标页渲染完成后再滚动
-      const pending = pendingScrollRef.current;
-      if (pending && pageWrapsRef.current.has(pending.page)) {
-        pendingScrollRef.current = null;
-        scrollToPageElement(pending.page, pending.smooth);
-      }
     },
-    [removePage, renderPage, scrollToPageElement],
+    [removePage, renderPage],
   );
 
   // ---------- 渲染主循环（由 loading / scale / fitWidth / 容器宽度 触发） ----------
@@ -376,6 +440,31 @@ export function PdfViewer({ path, src }: PdfViewerProps) {
       }
       if (cancelled) return;
 
+      // 虚拟滚动条基础：为全部页创建占位 wrapper 并按当前缩放定尺寸，
+      // 滚动总高度从此由总页数决定，与已渲染页无关
+      if (pageWrapsRef.current.size === 0) {
+        const frag = document.createDocumentFragment();
+        for (let i = 1; i <= numPagesRef.current; i++) {
+          const wrap = document.createElement("div");
+          wrap.className = "pdf-page-wrap";
+          wrap.dataset.pageNumber = String(i);
+          frag.append(wrap);
+          pageWrapsRef.current.set(i, wrap);
+        }
+        pages.append(frag);
+      }
+      const scaleChanged = Math.abs(scaleAppliedRef.current - renderScale) > 1e-6;
+      if (scaleAppliedRef.current === 0 || scaleChanged) {
+        const anchorWrap = pageWrapsRef.current.get(centerRef.current);
+        const rel = anchorWrap ? scroll.scrollTop - anchorWrap.offsetTop : 0;
+        const prevScale = scaleAppliedRef.current;
+        applySizes(renderScale);
+        // 缩放变化时以中心页为锚点换算滚动位置，避免滚动条跳变
+        if (anchorWrap && prevScale > 0 && scaleChanged) {
+          scroll.scrollTop = anchorWrap.offsetTop + (rel * renderScale) / prevScale;
+        }
+      }
+
       while (!cancelled) {
         await renderWindow(renderScale, () => cancelled);
         if (cancelled) return;
@@ -394,7 +483,7 @@ export function PdfViewer({ path, src }: PdfViewerProps) {
       wakeRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, fitWidth, scale, containerWidth, src, renderWindow]);
+  }, [loading, fitWidth, scale, containerWidth, src, renderWindow, applySizes]);
 
   // 监听滚动容器宽度变化（侧边栏开关 / 窗口缩放）以重新适配宽度
   useEffect(() => {
@@ -436,10 +525,9 @@ export function PdfViewer({ path, src }: PdfViewerProps) {
           lastNum = pageNum;
         }
       }
-      if (!found && lastBottom > 0) {
-        // 视口落在未渲染的空白区：按平均页高估算目标页
-        const estimate = lastNum + Math.ceil((line - lastBottom) / Math.max(80, avgPageHeightRef.current));
-        center = Math.max(1, Math.min(numPagesRef.current || 1, estimate));
+      if (!found) {
+        // 已滚过最后一页：定位到末页（占位恒存在，正常情况总能命中）
+        center = lastNum;
       }
 
       centerRef.current = center;
