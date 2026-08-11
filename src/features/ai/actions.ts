@@ -1,7 +1,6 @@
 import { runAgent, runAgentJson } from "@/lib/ai";
 import { useAppStore } from "@/store/useAppStore";
 import type { Priority, Status, Task } from "@/types";
-import { sanitizeUiSpec, UI_CATALOG_PROMPT, type UiSpec } from "./uiCatalog";
 import { taskTrackingSnapshot } from "@/lib/task-tracking";
 import { describeSchedule, taskSchedule } from "@/lib/task-schedule";
 
@@ -282,24 +281,15 @@ export const ASSISTANT_SYSTEM = `你是「小枢」（英文名 Shu），「脉�
 - PDF、压缩包等二进制文件可使用 bash 检查或调用工作目录中的工具处理
 - 回答时说明你实际使用了哪些附件；如果格式无法读取，明确指出具体文件和原因
 
-## 结构化界面（主动使用）
-当指标看板、清单汇总、对比表格、进度总览或数据图表明显比纯文字更清晰时，输出 \`mailuo-ui\` 代码块（内容是 json-render 扁平 spec，root 指向根元素 id，可以混排在正文中间，一次最多 3 块）：
-\`\`\`mailuo-ui
-{"root":"card1","elements":{"card1":{"type":"Card","props":{"title":"进度总览"},"children":["p1","b1"]},"p1":{"type":"Progress","props":{"label":"整体完成率","percent":40},"children":[]},"b1":{"type":"Button","props":{"label":"新建周报任务"},"on":{"press":{"action":"create_task","params":{"title":"写周报","priority":"normal"}}},"children":[]}}}
-\`\`\`
-
-${UI_CATALOG_PROMPT}
 `;
 
-/** 从助手回复中拆出正文、操作列表、图表与结构化界面 */
+/** 从助手回复中拆出正文与操作列表 */
 export function parseAssistantReply(text: string): {
   content: string;
   ops: AssistantOp[];
-  uiSpecs: UiSpec[];
 } {
   let content = text;
   let ops: AssistantOp[] = [];
-  const uiSpecs: UiSpec[] = [];
 
   // 按优先级尝试多种匹配方式
   let actionMatch: RegExpMatchArray | null = null;
@@ -336,23 +326,13 @@ export function parseAssistantReply(text: string): {
     content = content.replace(actionMatch[0], "");
   }
 
-  for (const m of content.matchAll(/```mailuo-ui\s*([\s\S]*?)```/g)) {
-    try {
-      const spec = sanitizeUiSpec(JSON.parse(m[1]));
-      if (spec) uiSpecs.push(spec);
-    } catch {
-      // 忽略坏界面块
-    }
-  }
+  // 旧协议围栏从正文剥离，避免用户看到原始 JSON
   content = content.replace(/```mailuo-ui\s*[\s\S]*?```/g, "");
-
-  // 旧协议（mailuo-chart）不再解析、不再渲染：历史消息里的残留围栏从正文剥离，避免用户看到原始 JSON
   content = content.replace(/```mailuo-chart\s*[\s\S]*?```/g, "");
 
   return {
     content: content.trim(),
     ops,
-    uiSpecs: uiSpecs.slice(0, 3),
   };
 }
 

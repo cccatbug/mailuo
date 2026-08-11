@@ -53,7 +53,6 @@ import {
   projectContext,
   type AssistantOp,
 } from "./actions";
-import { UiBlock, type UiSpec } from "./uiCatalog";
 import { Composer } from "./Composer";
 import {
   attachmentMeta,
@@ -99,7 +98,6 @@ export interface Message {
   interrupted?: boolean;
   ops?: AssistantOp[];
   opsApplied?: boolean;
-  uiSpecs?: UiSpec[];
   files?: string[];
   attachments?: AssistantAttachmentMeta[];
   assets?: AssetReference[];
@@ -587,10 +585,9 @@ async function completeAssistantTurn({
               .replace(/```mailuo-[\s\S]*?(```|$)/g, "")
               .trim(),
             ops: [],
-            uiSpecs: [],
           }
         : parseAssistantReply(fullText);
-      const { content, ops, uiSpecs } = parsed;
+      const { content, ops } = parsed;
       let parts = (m.parts ?? [])
         .map((p) =>
           p.kind === "text"
@@ -627,7 +624,6 @@ async function completeAssistantTurn({
         streaming: false,
         interrupted,
         ops,
-        uiSpecs,
       };
     });
     persistChats();
@@ -1187,10 +1183,6 @@ export function AssistantPanel() {
                         ))}
                       </div>
                     )}
-
-                    {m.uiSpecs?.map((spec, j) => (
-                      <UiBlock key={`u${j}`} spec={spec} />
-                    ))}
 
                     {m.ops && m.ops.length > 0 && (
                       <div className="rounded-xl border bg-card p-3">
