@@ -92,6 +92,20 @@ export interface ScheduledTasksSnapshot {
   runs: ScheduledRun[];
 }
 
+/**
+ * 按 run.id 合并一条运行记录（已存在则替换，不存在则追加）。
+ * 主进程既会通过 scheduled:event 推送运行记录，也会在 runNow 的 IPC 返回值里带回同一条，
+ * 两路可能先后到达——必须统一用 upsert 合并，否则面板会出现重复行。
+ */
+export function upsertScheduledRun(
+  runs: ScheduledRun[],
+  run: ScheduledRun
+): ScheduledRun[] {
+  return runs.some((item) => item.id === run.id)
+    ? runs.map((item) => (item.id === run.id ? run : item))
+    : [...runs, run];
+}
+
 export type ScheduledEventPayload =
   | { type: "jobs-changed" }
   | { type: "run"; run: ScheduledRun };

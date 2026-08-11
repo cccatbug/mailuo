@@ -4,6 +4,8 @@ import {
   describeScheduledTaskSchedule,
   formatNextRunCountdown,
   parseHHmm,
+  upsertScheduledRun,
+  type ScheduledRun,
 } from "./scheduled-tasks";
 
 describe("scheduled-tasks 纯函数", () => {
@@ -78,5 +80,36 @@ describe("scheduled-tasks 纯函数", () => {
     expect(formatNextRunCountdown(now + 2 * 86_400_000 + 3_600_000, now)).toBe(
       "2 天后"
     );
+  });
+
+  it("upsertScheduledRun 按 id 去重：同一 run 先后到达不会产生重复行", () => {
+    const base: ScheduledRun = {
+      id: "r1",
+      jobId: "j1",
+      projectId: "p1",
+      jobName: "周报",
+      startedAt: 1000,
+      finishedAt: null,
+      status: "running",
+      trigger: "manual",
+    };
+    // 事件推送先到达（running），IPC 返回值随后到达（仍是 running）
+    const afterEvent = upsertScheduledRun([], base);
+    const afterIpc = upsertScheduledRun(afterEvent, { ...base });
+    expect(afterIpc).toHaveLength(1);
+
+    // 运行结束事件用同一 id 更新，仍只有一行
+    const finished = upsertScheduledRun(afterIpc, {
+      ...base,
+      finishedAt: 5000,
+      status: "ok",
+      resultMarkdown: "# 报告",
+    });
+    expect(finished).toHaveLength(1);
+    expect(finished[0]?.status).toBe("ok");
+
+    // 不同 id 正常追加
+    const second: ScheduledRun = { ...base, id: "r2", startedAt: 2000 };
+    expect(upsertScheduledRun(finished, second)).toHaveLength(2);
   });
 });

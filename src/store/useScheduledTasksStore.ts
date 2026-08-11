@@ -1,10 +1,11 @@
 import { create } from "zustand";
 import { bridge } from "@/lib/bridge";
-import type {
-  SaveScheduledJobInput,
-  ScheduledEventPayload,
-  ScheduledJob,
-  ScheduledRun,
+import {
+  upsertScheduledRun,
+  type SaveScheduledJobInput,
+  type ScheduledEventPayload,
+  type ScheduledJob,
+  type ScheduledRun,
 } from "@/shared/scheduled-tasks";
 
 interface ScheduledTasksState {
@@ -91,7 +92,8 @@ export const useScheduledTasksStore = create<ScheduledTasksState>((set, get) => 
   runNow: async (id) => {
     if (!bridge) throw new Error("定时任务需要桌面环境");
     const run = await bridge.scheduledRunNow(id);
-    set((state) => ({ runs: [...state.runs, run] }));
+    // 主进程会同时通过 scheduled:event 推送同一条 run，用 upsert 避免重复行
+    set((state) => ({ runs: upsertScheduledRun(state.runs, run) }));
     return run;
   },
 
@@ -105,10 +107,6 @@ export const useScheduledTasksStore = create<ScheduledTasksState>((set, get) => 
       void get().load();
       return;
     }
-    set((state) => ({
-      runs: state.runs.some((item) => item.id === event.run.id)
-        ? state.runs.map((item) => (item.id === event.run.id ? event.run : item))
-        : [...state.runs, event.run],
-    }));
+    set((state) => ({ runs: upsertScheduledRun(state.runs, event.run) }));
   },
 }));
