@@ -53,7 +53,6 @@ import {
   projectContext,
   type AssistantOp,
 } from "./actions";
-import { AiChart, type ChartSpec } from "./AiChart";
 import { UiBlock, type UiSpec } from "./uiCatalog";
 import { Composer } from "./Composer";
 import {
@@ -100,7 +99,6 @@ export interface Message {
   interrupted?: boolean;
   ops?: AssistantOp[];
   opsApplied?: boolean;
-  charts?: ChartSpec[];
   uiSpecs?: UiSpec[];
   files?: string[];
   attachments?: AssistantAttachmentMeta[];
@@ -589,11 +587,10 @@ async function completeAssistantTurn({
               .replace(/```mailuo-[\s\S]*?(```|$)/g, "")
               .trim(),
             ops: [],
-            charts: [],
             uiSpecs: [],
           }
         : parseAssistantReply(fullText);
-      const { content, ops, charts, uiSpecs } = parsed;
+      const { content, ops, uiSpecs } = parsed;
       let parts = (m.parts ?? [])
         .map((p) =>
           p.kind === "text"
@@ -630,7 +627,6 @@ async function completeAssistantTurn({
         streaming: false,
         interrupted,
         ops,
-        charts,
         uiSpecs,
       };
     });
@@ -1192,9 +1188,6 @@ export function AssistantPanel() {
                       </div>
                     )}
 
-                    {m.charts?.map((spec, j) => (
-                      <AiChart key={`c${j}`} spec={spec} />
-                    ))}
                     {m.uiSpecs?.map((spec, j) => (
                       <UiBlock key={`u${j}`} spec={spec} />
                     ))}

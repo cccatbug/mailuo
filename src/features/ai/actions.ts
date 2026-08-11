@@ -1,8 +1,7 @@
 import { runAgent, runAgentJson } from "@/lib/ai";
 import { useAppStore } from "@/store/useAppStore";
 import type { Priority, Status, Task } from "@/types";
-import { sanitizeChartSpec, type ChartSpec } from "./AiChart";
-import { sanitizeUiSpec, type UiSpec } from "./uiCatalog";
+import { sanitizeUiSpec, UI_CATALOG_PROMPT, type UiSpec } from "./uiCatalog";
 import { taskTrackingSnapshot } from "@/lib/task-tracking";
 import { describeSchedule, taskSchedule } from "@/lib/task-schedule";
 
@@ -283,66 +282,23 @@ export const ASSISTANT_SYSTEM = `你是「小枢」（英文名 Shu），「脉�
 - PDF、压缩包等二进制文件可使用 bash 检查或调用工作目录中的工具处理
 - 回答时说明你实际使用了哪些附件；如果格式无法读取，明确指出具体文件和原因
 
-## 数据可视化（主动使用）
-你能够把任务快照直接画成图表，不必等用户明确说“画图”。除非用户明确只要纯文字或只是在执行一个简单操作，否则遇到以下情形时，默认输出 1-2 张最有信息量的图：
-- 项目概览、进展汇报、复盘、风险分析、任务盘点
-- 回答中出现 3 个及以上可比较的数值
-- 状态、优先级、标签、期限、工作量等分布或构成
-- 随日期变化的新增、完成、积压趋势
-- 多个分组之间的状态构成对比
-- 重要度与紧急度等两个数值维度的关系
-
-先用 1-3 句话指出图中最值得关注的结论，再输出图表。不要把同一组数据重复画成多张近似图。若同一回复还包含 \`mailuo-actions\`，图表必须放在操作块之前，操作块仍须保持在回复最末尾。
-
-单数值系列使用以下格式：
-\`\`\`mailuo-chart
-{"type":"bar","title":"图表标题","unit":"个","data":[{"label":"类别A","value":3},{"label":"类别B","value":5}]}
-\`\`\`
-
-图表类型选择：
-- \`bar\`：分类数值对比，适合状态、优先级、标签数量
-- \`line\`：离散时间点的趋势，适合每日完成数、积压变化
-- \`area\`：强调总量或累计量随时间的变化
-- \`donut\`：整体构成，类别宜为 2-6 个且总量有意义
-- \`radar\`：3-8 个同量纲维度的轮廓，如各标签覆盖度、项目健康度
-- \`gauge\`：单一目标的完成度；只放一个 data 项，并提供 \`max\`
-- \`stacked-bar\`：比较多个分组的内部构成，使用 series + values
-- \`scatter\`：观察两个数值维度的关系，使用 x/y 坐标
-
-\`gauge\` 示例：
-\`\`\`mailuo-chart
-{"type":"gauge","title":"项目完成度","unit":"%","max":100,"data":[{"label":"已完成","value":68}]}
-\`\`\`
-
-\`stacked-bar\` 示例：
-\`\`\`mailuo-chart
-{"type":"stacked-bar","title":"各标签任务状态","unit":"个","series":[{"key":"done","label":"已完成"},{"key":"doing","label":"进行中"},{"key":"todo","label":"待办"}],"data":[{"label":"前端","values":{"done":3,"doing":2,"todo":4}},{"label":"设计","values":{"done":2,"doing":1,"todo":1}}]}
-\`\`\`
-
-\`scatter\` 示例：
-\`\`\`mailuo-chart
-{"type":"scatter","title":"任务重要度与紧急度","xLabel":"紧急度","yLabel":"重要度","data":[{"label":"首页改版","x":82,"y":95},{"label":"文档整理","x":25,"y":48}]}
-\`\`\`
-
-所有数据必须由当前任务快照真实计算，不得编造。没有足够数据时宁可解释缺口，不要为了画图虚构数值。
-
-当结构化排版（指标看板、清单汇总、对比表格、进度总览等）比纯文字更清晰时，输出如下格式的界面代码块（内容为 json-render 扁平 spec，root 指向根元素 id）：
+## 结构化界面（主动使用）
+当指标看板、清单汇总、对比表格、进度总览或数据图表明显比纯文字更清晰时，输出 \`mailuo-ui\` 代码块（内容是 json-render 扁平 spec，root 指向根元素 id，可以混排在正文中间，一次最多 3 块）：
 \`\`\`mailuo-ui
-{"root":"card1","elements":{"card1":{"type":"Card","props":{"title":"进度总览"},"children":["p1"]},"p1":{"type":"Progress","props":{"label":"整体完成率","percent":40},"children":[]}}}
+{"root":"card1","elements":{"card1":{"type":"Card","props":{"title":"进度总览"},"children":["p1","b1"]},"p1":{"type":"Progress","props":{"label":"整体完成率","percent":40},"children":[]},"b1":{"type":"Button","props":{"label":"新建周报任务"},"on":{"press":{"action":"create_task","params":{"title":"写周报","priority":"normal"}}},"children":[]}}}
 \`\`\`
-可用组件目录：Card、Row、Stat、Text、Badge、List、Table、Progress、Callout、Divider。
-内容必须来自任务快照的真实数据。简单回答用纯文字即可，不要滥用界面块。`;
+
+${UI_CATALOG_PROMPT}
+`;
 
 /** 从助手回复中拆出正文、操作列表、图表与结构化界面 */
 export function parseAssistantReply(text: string): {
   content: string;
   ops: AssistantOp[];
-  charts: ChartSpec[];
   uiSpecs: UiSpec[];
 } {
   let content = text;
   let ops: AssistantOp[] = [];
-  const charts: ChartSpec[] = [];
   const uiSpecs: UiSpec[] = [];
 
   // 按优先级尝试多种匹配方式
@@ -380,16 +336,6 @@ export function parseAssistantReply(text: string): {
     content = content.replace(actionMatch[0], "");
   }
 
-  for (const m of content.matchAll(/```mailuo-chart\s*([\s\S]*?)```/g)) {
-    try {
-      const spec = sanitizeChartSpec(JSON.parse(m[1]));
-      if (spec) charts.push(spec);
-    } catch {
-      // 忽略坏图表块
-    }
-  }
-  content = content.replace(/```mailuo-chart\s*[\s\S]*?```/g, "");
-
   for (const m of content.matchAll(/```mailuo-ui\s*([\s\S]*?)```/g)) {
     try {
       const spec = sanitizeUiSpec(JSON.parse(m[1]));
@@ -403,7 +349,6 @@ export function parseAssistantReply(text: string): {
   return {
     content: content.trim(),
     ops,
-    charts: charts.slice(0, 3),
     uiSpecs: uiSpecs.slice(0, 3),
   };
 }
