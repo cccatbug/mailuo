@@ -152,14 +152,15 @@ describe("parseAssistantReply（json-render 混排）", () => {
     expect(parsed.content).toContain("正文");
   });
 
-  it("不再解析 mailuo-chart（旧协议）", () => {
+  it("不再解析 mailuo-chart（旧协议）：围栏从正文剥离，不留残留", () => {
     const text = `\`\`\`mailuo-chart
 {"type":"bar","title":"x","data":[{"label":"a","value":1}]}
 \`\`\`
 正文`;
     const parsed = parseAssistantReply(text);
     expect(parsed.uiSpecs).toHaveLength(0);
-    // 旧围栏不再被剥离，会作为正文残留（兼容旧消息）
-    expect(parsed.content).toContain("mailuo-chart");
+    expect(parsed.content).not.toContain("mailuo-chart");
+    expect(parsed.content).not.toContain("\"type\":\"bar\"");
+    expect(parsed.content).toContain("正文");
   });
 });

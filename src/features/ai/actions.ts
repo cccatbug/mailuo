@@ -346,6 +346,9 @@ export function parseAssistantReply(text: string): {
   }
   content = content.replace(/```mailuo-ui\s*[\s\S]*?```/g, "");
 
+  // 旧协议（mailuo-chart）不再解析、不再渲染：历史消息里的残留围栏从正文剥离，避免用户看到原始 JSON
+  content = content.replace(/```mailuo-chart\s*[\s\S]*?```/g, "");
+
   return {
     content: content.trim(),
     ops,
