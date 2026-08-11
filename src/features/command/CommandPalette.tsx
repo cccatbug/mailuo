@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   ChartPie,
+  Database,
   Folder,
   FolderPlus,
   Globe2,
@@ -35,6 +36,7 @@ import {
   focusOrOpenBrowser,
   openAssetPanel,
   openBrowserPanel,
+  openDatabasePanel,
 } from "@/components/DockLayout";
 
 export function CommandPalette() {
@@ -246,6 +248,10 @@ export function CommandPalette() {
           <CommandItem onSelect={() => run(() => openAssetPanel())}>
             <Folder />
             打开项目资产
+          </CommandItem>
+          <CommandItem onSelect={() => run(() => openDatabasePanel())}>
+            <Database />
+            打开项目数据库
           </CommandItem>
           <CommandItem onSelect={() => run(() => setSettingsOpen(true))}>
             <Settings />

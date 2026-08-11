@@ -44,6 +44,7 @@ import {
 } from "./memory-engine";
 import { createBrowserTools } from "./browser-tools";
 import { createTaskTools } from "./task-tools";
+import { createDbTools } from "./db-tools";
 import { createProviderToolsExtension } from "./provider-tools";
 import { BROWSER_CONTROL } from "./browser-runtime";
 import {
@@ -230,7 +231,7 @@ interface MailuoSessionRuntime {
 async function makeSessionRuntime(
   resolved: ResolvedAiRoute,
   system: string,
-  opts: { cwd?: string; withTools?: boolean; scheduled?: boolean } = {}
+  opts: { cwd?: string; withTools?: boolean; scheduled?: boolean; projectId?: string } = {}
 ): Promise<MailuoSessionRuntime> {
   const cwd = opts.cwd ?? process.cwd();
   if (opts.cwd) await fs.mkdir(cwd, { recursive: true });
@@ -303,11 +304,17 @@ async function makeSessionRuntime(
       lastExtensionLoadErrors
     );
   }
-  // 定时任务不挂 browser/task/todo 工具：它们依赖渲染进程 IPC，窗口不在时会超时失败
-  const customTools =
-    opts.withTools && !opts.scheduled
-      ? [...createBrowserTools(cwd), ...createTaskTools(), createTodoTool()]
-      : [];
+  // 数据库引擎在主进程，不依赖窗口：assistant 与定时任务都可用 db_* 工具。
+  // browser/task/todo 依赖渲染进程 IPC，定时任务无窗口时不挂。
+  const dbTools = opts.projectId ? createDbTools(() => opts.projectId) : [];
+  const customTools = opts.withTools
+    ? [
+        ...dbTools,
+        ...(opts.scheduled
+          ? []
+          : [...createBrowserTools(cwd), ...createTaskTools(), createTodoTool()]),
+      ]
+    : [];
 
   const { session, extensionsResult } = await createAgentSession({
     cwd,
@@ -713,6 +720,7 @@ export async function runScheduledJob(
     cwd,
     withTools: true,
     scheduled: true,
+    projectId: job.projectId,
   });
   onSession?.(session);
   const turn = new AgentTurnAccumulator();
@@ -770,7 +778,8 @@ function configKey(
 async function ensureAssistantRuntime(
   resolved: ResolvedAiRoute,
   systemPrompt: string,
-  cwd: string
+  cwd: string,
+  projectId?: string
 ): Promise<NonNullable<typeof assistant>> {
   const key = configKey(resolved, systemPrompt, cwd);
   if (assistant && assistant.key !== key) {
@@ -781,6 +790,7 @@ async function ensureAssistantRuntime(
     const runtime = await makeSessionRuntime(resolved, systemPrompt, {
       cwd,
       withTools: true,
+      projectId,
     });
     assistant = { ...runtime, key };
   }
@@ -801,7 +811,12 @@ export async function listAssistantCapabilities(
     undefined,
     normalizedProjectId
   );
-  const runtime = await ensureAssistantRuntime(resolved, assembled.systemPrompt, cwd);
+  const runtime = await ensureAssistantRuntime(
+    resolved,
+    assembled.systemPrompt,
+    cwd,
+    normalizedProjectId
+  );
   return {
     commands: runtime.extensionRuntime.getCommands().map((command) => ({
       name: command.name,
@@ -885,7 +900,8 @@ async function runAssistantTurn(
   const assistantRuntime = await ensureAssistantRuntime(
     resolved,
     assembled.systemPrompt,
-    cwd
+    cwd,
+    projectId || undefined
   );
   const { session } = assistantRuntime;
   lifecycle.session = session;

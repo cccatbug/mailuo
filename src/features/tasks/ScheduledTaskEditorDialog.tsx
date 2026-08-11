@@ -264,7 +264,7 @@ export function ScheduledTaskEditorDialog({
               maxLength={8000}
               placeholder={"例如：汇总本项目本周完成与进行中的任务，指出风险与下周重点，写成一份简短周报。"}
               onChange={(e) => setPrompt(e.target.value)}
-              className="resize-y"
+              className="resize-y max-h-72"
             />
           </Field>
         </FieldGroup>

@@ -85,6 +85,8 @@ import {
 } from "./browser-session";
 import { BROWSER_RUNTIME } from "./browser-runtime";
 import { TASK_RUNTIME } from "./task-runtime";
+import { PROJECT_DB } from "./project-db";
+import type { AppDataSnapshot } from "../src/shared/project-db";
 import { SCHEDULED_TASKS_STORE } from "./scheduled-tasks-store";
 import { SCHEDULED_TASKS_SCHEDULER } from "./scheduled-task-scheduler";
 import { saveScheduledJobInputSchema } from "../src/shared/scheduled-tasks";
@@ -155,6 +157,54 @@ async function saveState(data: string): Promise<void> {
   const tmp = `${file}.tmp`;
   await fs.writeFile(tmp, data, "utf8");
   await fs.rename(tmp, file);
+}
+
+/* ---------- 项目数据库：应用数据源 ---------- */
+
+function requireProjectId(projectId: unknown): string {
+  const id = typeof projectId === "string" ? projectId.trim() : "";
+  if (!id) throw new Error("缺少 projectId");
+  return id;
+}
+
+/**
+ * 收集应用数据快照，供项目数据库的 app_* 镜像表使用。
+ * 项目 / 任务直接读 mailuo.json（渲染进程落盘的权威副本）；
+ * 定时任务、资产、记忆分别来自各自的主进程存储。
+ */
+async function loadAppDataSnapshot(projectId: string): Promise<AppDataSnapshot> {
+  let projects: Record<string, unknown>[] = [];
+  let tasks: Record<string, unknown>[] = [];
+  try {
+    const raw = await loadState();
+    if (raw) {
+      const parsed = JSON.parse(raw) as {
+        projects?: unknown;
+        tasks?: unknown;
+      };
+      if (Array.isArray(parsed.projects)) {
+        projects = parsed.projects as Record<string, unknown>[];
+      }
+      if (Array.isArray(parsed.tasks)) {
+        tasks = parsed.tasks as Record<string, unknown>[];
+      }
+    }
+  } catch (error) {
+    console.error("[project-db] 读取 mailuo.json 失败：", error);
+  }
+  const [scheduled, assets, memory] = await Promise.all([
+    SCHEDULED_TASKS_STORE.snapshot().catch(() => ({ jobs: [], runs: [] })),
+    listProjectAssets(projectId).catch(() => []),
+    MEMORY_ENGINE.snapshot().catch(() => null),
+  ]);
+  return {
+    projects,
+    tasks,
+    scheduledJobs: scheduled.jobs as unknown as Record<string, unknown>[],
+    scheduledRuns: scheduled.runs as unknown as Record<string, unknown>[],
+    assets: assets as unknown as Record<string, unknown>[],
+    memories: (memory?.entries ?? []) as unknown as Record<string, unknown>[],
+  };
 }
 
 /* ---------- 窗口 ---------- */
@@ -1097,6 +1147,68 @@ function registerIpc() {
     SCHEDULED_TASKS_SCHEDULER.cancel(String(runId))
   );
 
+  /* ---------- 项目数据库（主进程 SQLite 引擎） ---------- */
+
+  ipcMain.handle("db:list", (_e, projectId: string) =>
+    PROJECT_DB.overview(requireProjectId(projectId))
+  );
+  ipcMain.handle("db:describe", (_e, projectId: string, table: string) =>
+    PROJECT_DB.describeTable(requireProjectId(projectId), String(table))
+  );
+  ipcMain.handle(
+    "db:query",
+    (_e, projectId: string, sql: string, params: unknown, limit: unknown) =>
+      PROJECT_DB.query(
+        requireProjectId(projectId),
+        String(sql),
+        Array.isArray(params) ? (params as unknown[]) : [],
+        typeof limit === "number" ? limit : undefined
+      )
+  );
+  ipcMain.handle("db:execute", (_e, projectId: string, sql: string, params: unknown) =>
+    PROJECT_DB.execute(
+      requireProjectId(projectId),
+      String(sql),
+      Array.isArray(params) ? (params as unknown[]) : []
+    )
+  );
+  ipcMain.handle("db:create-table", (_e, projectId: string, input: unknown) =>
+    PROJECT_DB.createTable(requireProjectId(projectId), input as never)
+  );
+  ipcMain.handle("db:insert", (_e, projectId: string, table: string, rows: unknown) =>
+    PROJECT_DB.insertRows(
+      requireProjectId(projectId),
+      String(table),
+      Array.isArray(rows) ? (rows as Record<string, unknown>[]) : []
+    )
+  );
+  ipcMain.handle(
+    "db:update",
+    (_e, projectId: string, table: string, set: unknown, where: unknown) =>
+      PROJECT_DB.updateRows(
+        requireProjectId(projectId),
+        String(table),
+        (set ?? {}) as Record<string, unknown>,
+        Array.isArray(where) ? (where as never) : []
+      )
+  );
+  ipcMain.handle("db:delete", (_e, projectId: string, table: string, where: unknown) =>
+    PROJECT_DB.deleteRows(
+      requireProjectId(projectId),
+      String(table),
+      Array.isArray(where) ? (where as never) : []
+    )
+  );
+  ipcMain.handle("db:sync", (_e, projectId: string, force: unknown) =>
+    PROJECT_DB.syncAppData(requireProjectId(projectId), Boolean(force))
+  );
+  ipcMain.handle("db:path", (_e, projectId: string) =>
+    PROJECT_DB.dbPath(requireProjectId(projectId))
+  );
+  ipcMain.handle("db:delete-database", (_e, projectId: string) =>
+    PROJECT_DB.deleteDatabase(requireProjectId(projectId))
+  );
+
   ipcMain.on("window:control", (e, action: string) => {
     const w = BrowserWindow.fromWebContents(e.sender);
     if (!w) return;
@@ -1126,9 +1238,11 @@ if (!app.requestSingleInstanceLock()) {
 
   void app.whenReady().then(async () => {
     registerIpc();
+    PROJECT_DB.setAppDataSource({ load: loadAppDataSnapshot });
     app.on("will-quit", () => {
       FILE_SERVER.close();
       SCHEDULED_TASKS_SCHEDULER.stop();
+      PROJECT_DB.closeAll();
     });
     BROWSER_SESSION.setAgentDownloadApproval((webContentsId, filename, url) =>
       BROWSER_RUNTIME.approveDownload(webContentsId, filename, url)
@@ -1157,6 +1271,7 @@ if (!app.requestSingleInstanceLock()) {
     BROWSER_RUNTIME.cancelPending();
     TASK_RUNTIME.cancelPending();
     SCHEDULED_TASKS_SCHEDULER.stop();
+    PROJECT_DB.closeAll();
     assistantReset();
     if (browserDataFlushed) return;
     event.preventDefault();

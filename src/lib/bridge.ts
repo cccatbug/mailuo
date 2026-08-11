@@ -288,6 +288,20 @@ export interface MailuoApi {
   scheduledCancel: (runId: string) => Promise<boolean>;
   onScheduledEvent: (handler: (event: ScheduledEventPayload) => void) => () => void;
   windowControl: (action: "minimize" | "maximize" | "close") => void;
+
+  /* ---------- 项目数据库 ---------- */
+
+  dbList: (projectId: string) => Promise<import("@/shared/project-db").DbOverview>;
+  dbDescribe: (projectId: string, table: string) => Promise<import("@/shared/project-db").DbDescribeResult>;
+  dbQuery: (projectId: string, sql: string, params?: unknown[], limit?: number) => Promise<import("@/shared/project-db").DbQueryResult>;
+  dbExecute: (projectId: string, sql: string, params?: unknown[]) => Promise<import("@/shared/project-db").DbQueryResult>;
+  dbCreateTable: (projectId: string, input: unknown) => Promise<{ table: string; inserted: number }>;
+  dbInsert: (projectId: string, table: string, rows: Record<string, unknown>[]) => Promise<{ inserted: number }>;
+  dbUpdate: (projectId: string, table: string, set: Record<string, unknown>, where: unknown[]) => Promise<{ changes: number }>;
+  dbDelete: (projectId: string, table: string, where: unknown[]) => Promise<{ changes: number }>;
+  dbSync: (projectId: string, force?: boolean) => Promise<{ synced: boolean; counts: Record<string, number> }>;
+  dbPath: (projectId: string) => Promise<string>;
+  dbDeleteDatabase: (projectId: string) => Promise<void>;
 }
 
 declare global {

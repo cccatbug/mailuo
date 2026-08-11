@@ -64,8 +64,10 @@ import { FileEditor } from "@/features/files/FileEditor";
 import { BrowserPanel } from "@/features/files/BrowserPanel";
 import { AssetPanel } from "@/features/files/AssetPanel";
 import { ScheduledTasksPanel } from "@/features/tasks/ScheduledTasksPanel";
+import { DatabasePanel } from "@/features/database/DatabasePanel";
 import { useAppStore, type ViewMode } from "@/store/useAppStore";
 import { useScheduledTasksStore } from "@/store/useScheduledTasksStore";
+import { useProjectDbStore } from "@/store/useProjectDbStore";
 import { bridge } from "@/lib/bridge";
 import { closeDockPanels } from "./dock-menu";
 import {
@@ -110,6 +112,7 @@ const components: Record<string, React.FunctionComponent<IDockviewPanelProps>> =
   ),
   assets: () => <AssetPanel />,
   scheduled: () => <ScheduledTasksPanel />,
+  database: () => <DatabasePanel />,
 };
 
 const VIEW_PANEL_TITLE: Record<ViewMode, string> = {
@@ -228,6 +231,25 @@ export function openScheduledPanel(projectId?: string) {
     component: "scheduled",
     title: "定时任务",
     minimumWidth: 560,
+    position: { referencePanel: api.getPanel("tasks") ? "tasks" : undefined as never, direction: "within" },
+  });
+}
+
+/** 打开项目数据库面板（带 projectId 时过滤到该项目） */
+export function openDatabasePanel(projectId?: string) {
+  const api = dockRef.api;
+  if (!api) return;
+  if (projectId) {
+    useProjectDbStore.getState().setSelectedProjectId(projectId);
+    void useProjectDbStore.getState().loadOverview();
+  }
+  const existing = api.getPanel("database");
+  if (existing) return existing.api.setActive();
+  api.addPanel({
+    id: "database",
+    component: "database",
+    title: "项目数据库",
+    minimumWidth: 600,
     position: { referencePanel: api.getPanel("tasks") ? "tasks" : undefined as never, direction: "within" },
   });
 }

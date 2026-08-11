@@ -524,6 +524,26 @@ const api = {
 
   windowControl: (action: "minimize" | "maximize" | "close"): void =>
     ipcRenderer.send("window:control", action),
+
+  /* ---------- 项目数据库 ---------- */
+
+  dbList: (projectId: string) => ipcRenderer.invoke("db:list", projectId),
+  dbDescribe: (projectId: string, table: string) => ipcRenderer.invoke("db:describe", projectId, table),
+  dbQuery: (projectId: string, sql: string, params?: unknown[], limit?: number) =>
+    ipcRenderer.invoke("db:query", projectId, sql, params, limit),
+  dbExecute: (projectId: string, sql: string, params?: unknown[]) =>
+    ipcRenderer.invoke("db:execute", projectId, sql, params),
+  dbCreateTable: (projectId: string, input: unknown) =>
+    ipcRenderer.invoke("db:create-table", projectId, input),
+  dbInsert: (projectId: string, table: string, rows: Record<string, unknown>[]) =>
+    ipcRenderer.invoke("db:insert", projectId, table, rows),
+  dbUpdate: (projectId: string, table: string, set: Record<string, unknown>, where: unknown[]) =>
+    ipcRenderer.invoke("db:update", projectId, table, set, where),
+  dbDelete: (projectId: string, table: string, where: unknown[]) =>
+    ipcRenderer.invoke("db:delete", projectId, table, where),
+  dbSync: (projectId: string, force?: boolean) => ipcRenderer.invoke("db:sync", projectId, force),
+  dbPath: (projectId: string) => ipcRenderer.invoke("db:path", projectId) as Promise<string>,
+  dbDeleteDatabase: (projectId: string) => ipcRenderer.invoke("db:delete-database", projectId),
 };
 
 export type MailuoApi = typeof api;

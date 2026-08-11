@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
+import { bridge } from "@/lib/bridge";
 import {
   Archive,
   BookOpen,
   BriefcaseBusiness,
   CalendarClock,
+  Database,
   FlaskConical,
   FolderPlus,
   House,
@@ -61,7 +63,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { openScheduledPanel } from "@/components/DockLayout";
+import { openDatabasePanel, openScheduledPanel } from "@/components/DockLayout";
 import { toast } from "sonner";
 import { useAppStore } from "@/store/useAppStore";
 import { isBlocked } from "@/lib/deps";
@@ -522,6 +524,10 @@ export function ProjectSidebar() {
                       <CalendarClock />
                       定时任务
                     </ContextMenuItem>
+                    <ContextMenuItem onClick={() => openDatabasePanel(p.id)}>
+                      <Database />
+                      项目数据库
+                    </ContextMenuItem>
                   </ContextMenuGroup>
                   <ContextMenuSeparator />
                   <ContextMenuGroup>
@@ -710,6 +716,8 @@ export function ProjectSidebar() {
                 if (!deleting) return;
                 const removed = deleteProject(deleting.id);
                 if (!removed) return;
+                // 一并清理项目数据库文件
+                bridge?.dbDeleteDatabase(deleting.id).catch(() => undefined);
                 toast(`已删除「${removed.project.name}」`, {
                   description:
                     removed.tasks.length > 0

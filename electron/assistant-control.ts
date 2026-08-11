@@ -26,6 +26,14 @@ const MUTATING_TOOLS = new Set([
   "task_update",
   "task_delete",
   "task_link",
+  "db_execute",
+  "db_batch",
+  "db_create_table",
+  "db_alter_table",
+  "db_drop_table",
+  "db_insert",
+  "db_update",
+  "db_delete",
 ]);
 
 const TOOL_LABELS: Record<string, string> = {
@@ -37,6 +45,14 @@ const TOOL_LABELS: Record<string, string> = {
   task_delete: "删除任务",
   task_link: "调整任务依赖",
   project_list: "切换项目",
+  db_execute: "执行数据库 SQL",
+  db_batch: "批量执行数据库 SQL",
+  db_create_table: "创建数据库表",
+  db_alter_table: "修改数据库表结构",
+  db_drop_table: "删除数据库表",
+  db_insert: "写入数据库数据",
+  db_update: "更新数据库数据",
+  db_delete: "删除数据库数据",
 };
 
 function isMutatingTool(
