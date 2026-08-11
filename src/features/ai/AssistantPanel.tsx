@@ -886,6 +886,8 @@ export function AssistantPanel() {
     conv && conv.projectId === selectedProjectId ? conv.messages : [];
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  /** 内容容器：高度可能异步变化（markdown 图片、图表布局、流式输出），用 ResizeObserver 跟随 */
+  const contentRef = useRef<HTMLDivElement>(null);
   const lastProjectRef = useRef(selectedProjectId);
 
   useEffect(() => {
@@ -915,11 +917,34 @@ export function AssistantPanel() {
     setPinned(el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK);
   }, []);
 
+  // messages 引用变化时的快速跟随（流式输出每帧增量）
   useEffect(() => {
     if (!pinnedRef.current) return;
     const frame = requestAnimationFrame(() => scrollToBottom());
     return () => cancelAnimationFrame(frame);
   }, [messages, scrollToBottom]);
+
+  // 内容高度异步变化时（图表布局完成、图片加载、面板尺寸调整）贴底跟随。
+  // 此前只监听 messages，导致图表/图片长高后滚动条与内容脱节、回到最新滚不到位。
+  useEffect(() => {
+    const content = contentRef.current;
+    const scroller = scrollRef.current;
+    if (!content || !scroller) return;
+    let frame = 0;
+    const refresh = () => {
+      if (!pinnedRef.current) return;
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => scrollToBottom());
+    };
+    const observer = new ResizeObserver(refresh);
+    observer.observe(content);
+    // 面板尺寸变化（dockview 拖拽 / dock↔float 切换）时可视高度改变，贴底者保持贴底
+    observer.observe(scroller);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [scrollToBottom]);
 
   // 自己刚发出的消息，无论之前滚到哪里都该跳回底部
   const lastRole = messages[messages.length - 1]?.role;
@@ -1009,6 +1034,10 @@ export function AssistantPanel() {
         onScroll={onScroll}
         className="min-h-0 flex-1 overflow-y-auto p-4"
       >
+        <div
+          ref={contentRef}
+          className={messages.length === 0 ? "h-full" : "flex flex-col gap-3"}
+        >
         {messages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-sm text-muted-foreground">
             <Bot className="size-12 text-primary/70" />
@@ -1212,6 +1241,7 @@ export function AssistantPanel() {
             ))}
           </div>
         )}
+        </div>
       </div>
 
       {!pinned && messages.length > 0 && (
@@ -1219,7 +1249,9 @@ export function AssistantPanel() {
           className="absolute bottom-2 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-full border bg-popover/95 px-3 py-1.5 text-xs shadow-md backdrop-blur transition-colors hover:bg-accent"
           onClick={() => {
             setPinned(true);
-            scrollToBottom("smooth");
+            // 先瞬时到底再平滑校准：内容若在增长（图表/图片/流式），smooth 到旧高度会滚不到位
+            scrollToBottom();
+            requestAnimationFrame(() => scrollToBottom("smooth"));
           }}
         >
           <ArrowDown className="size-3.5" />
