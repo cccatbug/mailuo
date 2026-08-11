@@ -1,7 +1,7 @@
 {
   "name": "mailuo",
   "private": true,
-  "version": "0.24.0",
+  "version": "0.25.0",
   "description": "AI 驱动的桌面任务与知识管理应用",
   "author": {
     "name": "cccatbug",
