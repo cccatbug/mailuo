@@ -1,9 +1,9 @@
-import { Bot, FolderKanban, FolderOpen, Globe2, MoonStar, Search, Settings, SunMedium } from "lucide-react";
+import { Bot, CalendarClock, FolderKanban, FolderOpen, Globe2, MoonStar, Search, Settings, SunMedium } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAppStore } from "@/store/useAppStore";
 import { MOD_KEY, modLabel } from "@/lib/platform";
-import { openAssetPanel, openBrowserPanel } from "@/components/DockLayout";
+import { openAssetPanel, openBrowserPanel, openScheduledPanel } from "@/components/DockLayout";
 
 function RibbonButton({
   label,
@@ -74,6 +74,9 @@ export function Ribbon() {
       </RibbonButton>
       <RibbonButton label="项目资产" onClick={() => openAssetPanel()}>
         <FolderOpen />
+      </RibbonButton>
+      <RibbonButton label="定时任务" onClick={() => openScheduledPanel()}>
+        <CalendarClock />
       </RibbonButton>
 
       <div className="flex-1" />

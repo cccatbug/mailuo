@@ -21,6 +21,7 @@ import { SettingsDialog } from "@/features/settings/SettingsDialog";
 import { AiDialogs } from "@/features/ai/AiDialogs";
 import { bridge } from "@/lib/bridge";
 import { flushPersist, setPersistErrorHandler } from "@/lib/persist";
+import { useScheduledTasksStore } from "@/store/useScheduledTasksStore";
 import { toast } from "sonner";
 import { isMac } from "@/lib/platform";
 import { cn } from "@/lib/utils";
@@ -209,6 +210,15 @@ export default function App() {
   }, []);
 
   useEffect(() => bridge?.onBrowserOpenTab((url) => openBrowserPanel(url)), []);
+
+  // 定时任务运行状态推送：合并运行记录，jobs 变化时重新拉取
+  useEffect(
+    () =>
+      bridge?.onScheduledEvent((event) =>
+        useScheduledTasksStore.getState().applyEvent(event)
+      ),
+    []
+  );
 
   useEffect(
     () =>

@@ -4,6 +4,7 @@ import {
   Archive,
   BookOpen,
   BriefcaseBusiness,
+  CalendarClock,
   FlaskConical,
   FolderPlus,
   House,
@@ -60,6 +61,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { openScheduledPanel } from "@/components/DockLayout";
 import { toast } from "sonner";
 import { useAppStore } from "@/store/useAppStore";
 import { isBlocked } from "@/lib/deps";
@@ -515,6 +517,10 @@ export function ProjectSidebar() {
                     >
                       <ListPlus />
                       AI 依赖建议
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={() => openScheduledPanel(p.id)}>
+                      <CalendarClock />
+                      定时任务
                     </ContextMenuItem>
                   </ContextMenuGroup>
                   <ContextMenuSeparator />

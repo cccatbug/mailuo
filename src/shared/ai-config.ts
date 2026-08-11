@@ -6,6 +6,7 @@ export const AI_USE_CASES = [
   "task-breakdown",
   "dependency-suggest",
   "notes-polish",
+  "scheduled",
 ] as const;
 
 export const AI_API_TYPES = [
@@ -389,6 +390,7 @@ export const aiConfigV1Schema = z
         "task-breakdown": aiRouteConfigSchema,
         "dependency-suggest": aiRouteConfigSchema,
         "notes-polish": aiRouteConfigSchema,
+        scheduled: aiRouteConfigSchema,
       })
       .strict(),
     contextProfiles: z.array(aiContextProfileSchema).min(1),
@@ -548,6 +550,7 @@ export function createDefaultAiConfig(): AiConfigV1 {
       "task-breakdown": route(COMPACT_CONTEXT_PROFILE_ID),
       "dependency-suggest": route(COMPACT_CONTEXT_PROFILE_ID),
       "notes-polish": route(COMPACT_CONTEXT_PROFILE_ID),
+      scheduled: route(FULL_CONTEXT_PROFILE_ID),
     },
     contextProfiles,
     pi: createDefaultAiPiConfig(),

@@ -42,6 +42,13 @@ import type {
 } from "../src/shared/memory";
 import type { TaskCommand } from "../src/shared/task-commands";
 import type {
+  SaveScheduledJobInput,
+  ScheduledEventPayload,
+  ScheduledJob,
+  ScheduledRun,
+  ScheduledTasksSnapshot,
+} from "../src/shared/scheduled-tasks";
+import type {
   PiExtensionCatalogItem,
   PiPackagePreview,
   PiResourcesSnapshot,
@@ -493,6 +500,27 @@ const api = {
   },
 
   assistantReset: (): Promise<void> => ipcRenderer.invoke("assistant:reset"),
+
+  /* ---------- 定时任务 ---------- */
+
+  scheduledList: (): Promise<ScheduledTasksSnapshot> =>
+    ipcRenderer.invoke("scheduled:list"),
+  scheduledSave: (input: SaveScheduledJobInput): Promise<ScheduledJob> =>
+    ipcRenderer.invoke("scheduled:save", input),
+  scheduledDelete: (id: string): Promise<void> =>
+    ipcRenderer.invoke("scheduled:delete", id),
+  scheduledToggle: (id: string, enabled: boolean): Promise<ScheduledJob> =>
+    ipcRenderer.invoke("scheduled:toggle", id, enabled),
+  scheduledRunNow: (id: string): Promise<ScheduledRun> =>
+    ipcRenderer.invoke("scheduled:run-now", id),
+  scheduledCancel: (runId: string): Promise<boolean> =>
+    ipcRenderer.invoke("scheduled:cancel", runId),
+  onScheduledEvent: (handler: (event: ScheduledEventPayload) => void): (() => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, event: ScheduledEventPayload) =>
+      handler(event);
+    ipcRenderer.on("scheduled:event", listener);
+    return () => ipcRenderer.removeListener("scheduled:event", listener);
+  },
 
   windowControl: (action: "minimize" | "maximize" | "close"): void =>
     ipcRenderer.send("window:control", action),

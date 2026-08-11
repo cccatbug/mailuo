@@ -63,7 +63,9 @@ import {
 import { FileEditor } from "@/features/files/FileEditor";
 import { BrowserPanel } from "@/features/files/BrowserPanel";
 import { AssetPanel } from "@/features/files/AssetPanel";
+import { ScheduledTasksPanel } from "@/features/tasks/ScheduledTasksPanel";
 import { useAppStore, type ViewMode } from "@/store/useAppStore";
+import { useScheduledTasksStore } from "@/store/useScheduledTasksStore";
 import { bridge } from "@/lib/bridge";
 import { closeDockPanels } from "./dock-menu";
 import {
@@ -107,6 +109,7 @@ const components: Record<string, React.FunctionComponent<IDockviewPanelProps>> =
     />
   ),
   assets: () => <AssetPanel />,
+  scheduled: () => <ScheduledTasksPanel />,
 };
 
 const VIEW_PANEL_TITLE: Record<ViewMode, string> = {
@@ -209,6 +212,22 @@ export function openAssetPanel() {
     component: "assets",
     title: "项目资产",
     minimumWidth: 420,
+    position: { referencePanel: api.getPanel("tasks") ? "tasks" : undefined as never, direction: "within" },
+  });
+}
+
+/** 打开定时任务面板（带 projectId 时过滤到该项目，否则回到全部项目） */
+export function openScheduledPanel(projectId?: string) {
+  const api = dockRef.api;
+  if (!api) return;
+  useScheduledTasksStore.getState().setFilterProject(projectId ?? null);
+  const existing = api.getPanel("scheduled");
+  if (existing) return existing.api.setActive();
+  api.addPanel({
+    id: "scheduled",
+    component: "scheduled",
+    title: "定时任务",
+    minimumWidth: 560,
     position: { referencePanel: api.getPanel("tasks") ? "tasks" : undefined as never, direction: "within" },
   });
 }

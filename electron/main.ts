@@ -5,8 +5,7 @@ import {
   ipcMain,
   shell,
 } from "electron";
-import { randomUUID } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { randomUUID } from "node:crypto";import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -85,6 +84,9 @@ import {
 } from "./browser-session";
 import { BROWSER_RUNTIME } from "./browser-runtime";
 import { TASK_RUNTIME } from "./task-runtime";
+import { SCHEDULED_TASKS_STORE } from "./scheduled-tasks-store";
+import { SCHEDULED_TASKS_SCHEDULER } from "./scheduled-task-scheduler";
+import { saveScheduledJobInputSchema } from "../src/shared/scheduled-tasks";
 import type {
   BrowserAgentMode,
   BrowserApprovalResponse,
@@ -1011,6 +1013,9 @@ function registerIpc() {
       if (parsedUseCase === "assistant") {
         throw new Error("assistant 只能通过专用会话接口调用");
       }
+      if (parsedUseCase === "scheduled") {
+        throw new Error("scheduled 只能通过定时任务调度执行");
+      }
       return runOneShot(
         parsedUseCase,
         prompt,
@@ -1057,6 +1062,25 @@ function registerIpc() {
     assistantReset();
   });
 
+  /* ---------- 定时任务 ---------- */
+
+  ipcMain.handle("scheduled:list", () => SCHEDULED_TASKS_STORE.snapshot());
+  ipcMain.handle("scheduled:save", (_e, input: unknown) =>
+    SCHEDULED_TASKS_STORE.saveJob(saveScheduledJobInputSchema.parse(input))
+  );
+  ipcMain.handle("scheduled:delete", (_e, id: string) =>
+    SCHEDULED_TASKS_STORE.deleteJob(String(id))
+  );
+  ipcMain.handle("scheduled:toggle", (_e, id: string, enabled: boolean) =>
+    SCHEDULED_TASKS_STORE.setEnabled(String(id), Boolean(enabled))
+  );
+  ipcMain.handle("scheduled:run-now", (_e, id: string) =>
+    SCHEDULED_TASKS_SCHEDULER.runNow(String(id))
+  );
+  ipcMain.handle("scheduled:cancel", (_e, runId: string) =>
+    SCHEDULED_TASKS_SCHEDULER.cancel(String(runId))
+  );
+
   ipcMain.on("window:control", (e, action: string) => {
     const w = BrowserWindow.fromWebContents(e.sender);
     if (!w) return;
@@ -1086,13 +1110,18 @@ if (!app.requestSingleInstanceLock()) {
 
   void app.whenReady().then(async () => {
     registerIpc();
-    app.on("will-quit", () => FILE_SERVER.close());
+    app.on("will-quit", () => {
+      FILE_SERVER.close();
+      SCHEDULED_TASKS_SCHEDULER.stop();
+    });
     BROWSER_SESSION.setAgentDownloadApproval((webContentsId, filename, url) =>
       BROWSER_RUNTIME.approveDownload(webContentsId, filename, url)
     );
     BROWSER_SESSION.initialize(() => win);
     BROWSER_RUNTIME.initialize(() => win);
     TASK_RUNTIME.initialize(() => win);
+    SCHEDULED_TASKS_SCHEDULER.initialize(() => win);
+    SCHEDULED_TASKS_SCHEDULER.start();
     createWindow();
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -1111,6 +1140,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on("before-quit", (event) => {
     BROWSER_RUNTIME.cancelPending();
     TASK_RUNTIME.cancelPending();
+    SCHEDULED_TASKS_SCHEDULER.stop();
     assistantReset();
     if (browserDataFlushed) return;
     event.preventDefault();

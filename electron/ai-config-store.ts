@@ -157,6 +157,14 @@ function normalizeLegacyV1Compat(input: unknown): unknown {
     delete next.google;
     target.compat = next;
   }
+  // 新增用途路由回填：旧配置缺 scheduled 路由时以 assistant 路由为底补齐
+  const routes = record(clone.routes);
+  if (routes && !record(routes.scheduled)) {
+    const fallback = record(routes.assistant);
+    if (fallback) {
+      routes.scheduled = structuredClone(fallback);
+    }
+  }
   return clone;
 }
 

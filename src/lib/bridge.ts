@@ -41,6 +41,13 @@ import type {
 } from "@/shared/memory";
 import type { TaskCommand } from "@/shared/task-commands";
 import type {
+  SaveScheduledJobInput,
+  ScheduledEventPayload,
+  ScheduledJob,
+  ScheduledRun,
+  ScheduledTasksSnapshot,
+} from "@/shared/scheduled-tasks";
+import type {
   PiExtensionCatalogItem,
   PiPackagePreview,
   PiResourcesSnapshot,
@@ -273,6 +280,13 @@ export interface MailuoApi {
     handler: (requestId: string, event: AssistantEventPayload) => void
   ) => () => void;
   assistantReset: () => Promise<void>;
+  scheduledList: () => Promise<ScheduledTasksSnapshot>;
+  scheduledSave: (input: SaveScheduledJobInput) => Promise<ScheduledJob>;
+  scheduledDelete: (id: string) => Promise<void>;
+  scheduledToggle: (id: string, enabled: boolean) => Promise<ScheduledJob>;
+  scheduledRunNow: (id: string) => Promise<ScheduledRun>;
+  scheduledCancel: (runId: string) => Promise<boolean>;
+  onScheduledEvent: (handler: (event: ScheduledEventPayload) => void) => () => void;
   windowControl: (action: "minimize" | "maximize" | "close") => void;
 }
 

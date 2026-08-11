@@ -55,6 +55,7 @@ import { assembleAiContext } from "./context-assembly";
 import {
   ASSISTANT_SYSTEM_PROMPT,
   ONE_SHOT_SYSTEM_PROMPTS,
+  SCHEDULED_TASK_SYSTEM_PROMPT,
   type OneShotUseCase,
 } from "../src/shared/ai-prompts";
 
@@ -229,7 +230,7 @@ interface MailuoSessionRuntime {
 async function makeSessionRuntime(
   resolved: ResolvedAiRoute,
   system: string,
-  opts: { cwd?: string; withTools?: boolean } = {}
+  opts: { cwd?: string; withTools?: boolean; scheduled?: boolean } = {}
 ): Promise<MailuoSessionRuntime> {
   const cwd = opts.cwd ?? process.cwd();
   if (opts.cwd) await fs.mkdir(cwd, { recursive: true });
@@ -280,17 +281,22 @@ async function makeSessionRuntime(
     noContextFiles: true,
     additionalExtensionPaths: extensionPaths,
     extensionFactories: opts.withTools
-      ? [
-          assistantPermissionExtension,
-          createProviderToolsExtension(resolved.provider),
-        ]
+      ? // 定时任务无用户在场：不挂审批扩展（否则变更类工具会被静默拒绝），只保留 provider 工具
+        opts.scheduled
+        ? [createProviderToolsExtension(resolved.provider)]
+        : [
+            assistantPermissionExtension,
+            createProviderToolsExtension(resolved.provider),
+          ]
       : [],
     systemPromptOverride: () => fullSystem,
   });
   await resourceLoader.reload();
-  const customTools = opts.withTools
-    ? [...createBrowserTools(cwd), ...createTaskTools(), createTodoTool()]
-    : [];
+  // 定时任务不挂 browser/task/todo 工具：它们依赖渲染进程 IPC，窗口不在时会超时失败
+  const customTools =
+    opts.withTools && !opts.scheduled
+      ? [...createBrowserTools(cwd), ...createTaskTools(), createTodoTool()]
+      : [];
 
   const { session, extensionsResult } = await createAgentSession({
     cwd,
@@ -662,6 +668,53 @@ export async function runOneShot(
     return result;
   } finally {
     unsub();
+    session.dispose();
+  }
+}
+
+/* ---------- 定时任务：项目维度 headless 执行（带文件工具，无 UI 依赖） ---------- */
+
+export interface ScheduledJobExecution {
+  projectId: string;
+  prompt: string;
+  modelOverride?: AiModelRef | null;
+}
+
+/**
+ * 在独立一次性会话中执行定时任务。
+ * 与常驻小枢会话互不干扰；产出纯 Markdown 文本由调度器持久化。
+ * onSession 用于把会话交给调用方支持中途取消。
+ */
+export async function runScheduledJob(
+  job: ScheduledJobExecution,
+  onSession?: (session: AgentSession) => void
+): Promise<string> {
+  const cwd = workspaceDir(job.projectId);
+  const resolved = await AI_RUNTIME.resolve("scheduled", job.modelOverride);
+  const assembled = await buildPrompt(
+    resolved,
+    SCHEDULED_TASK_SYSTEM_PROMPT,
+    job.prompt,
+    undefined,
+    job.projectId
+  );
+  const { session } = await makeSessionRuntime(resolved, assembled.systemPrompt, {
+    cwd,
+    withTools: true,
+    scheduled: true,
+  });
+  onSession?.(session);
+  const turn = new AgentTurnAccumulator();
+  const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
+    turn.handle(event);
+  });
+  try {
+    await session.prompt(assembled.message);
+    const result = turn.finish();
+    if (!result) throw new Error("模型返回了空回复");
+    return result;
+  } finally {
+    unsubscribe();
     session.dispose();
   }
 }

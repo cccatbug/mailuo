@@ -68,6 +68,7 @@ const USE_CASE_LABELS: Record<AiUseCase, string> = {
   "task-breakdown": "任务拆解",
   "dependency-suggest": "依赖建议",
   "notes-polish": "备注润色",
+  scheduled: "定时任务",
 };
 
 const PRESETS: Record<
