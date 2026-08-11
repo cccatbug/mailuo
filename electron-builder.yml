@@ -11,6 +11,11 @@ extraResources:
     to: THIRD_PARTY_NOTICES.md
 asarUnpack:
   - node_modules/@earendil-works/**
+  - node_modules/jiti/**
+  - node_modules/.pnpm/jiti@*/node_modules/jiti/**
+  - node_modules/.pnpm/@babel+*/node_modules/@babel/**
+  - node_modules/.pnpm/babel*/**
+  - node_modules/.pnpm/esbuild@*/node_modules/esbuild/**
 mac:
   icon: build/icon.icns
   category: public.app-category.productivity

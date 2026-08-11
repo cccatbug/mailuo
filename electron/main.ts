@@ -16,6 +16,7 @@ import {
   assistantAbort,
   assistantReset,
   assistantSend,
+  getExtensionLoadErrors,
   listAssistantCapabilities,
   listModels,
   listSkills,
@@ -291,7 +292,22 @@ async function savePiConfig(
 
 async function currentPiResources() {
   const snapshot = await AI_RUNTIME.snapshot();
-  return PI_RESOURCES.discover(snapshot.config);
+  const resources = await PI_RESOURCES.discover(snapshot.config);
+  const loadErrors = getExtensionLoadErrors();
+  if (loadErrors.length > 0) {
+    const merged = [...resources.diagnostics];
+    for (const err of loadErrors) {
+      if (!merged.some((existing) => existing.message === err.error && existing.path === err.path)) {
+        merged.push({
+          type: "error" as const,
+          message: `扩展加载失败：${err.error}`,
+          ...(err.path ? { path: err.path } : {}),
+        });
+      }
+    }
+    return { ...resources, diagnostics: merged };
+  }
+  return resources;
 }
 
 function normalizedPiPath(value: string): string {

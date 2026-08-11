@@ -292,6 +292,17 @@ async function makeSessionRuntime(
     systemPromptOverride: () => fullSystem,
   });
   await resourceLoader.reload();
+  const loaderResult = resourceLoader.getExtensions();
+  lastExtensionLoadErrors = loaderResult.errors.map((e) => ({
+    path: e.path,
+    error: e.error,
+  }));
+  if (lastExtensionLoadErrors.length > 0) {
+    console.error(
+      "[mailuo] pi extension load errors:",
+      lastExtensionLoadErrors
+    );
+  }
   // 定时任务不挂 browser/task/todo 工具：它们依赖渲染进程 IPC，窗口不在时会超时失败
   const customTools =
     opts.withTools && !opts.scheduled
@@ -717,6 +728,19 @@ export async function runScheduledJob(
     unsubscribe();
     session.dispose();
   }
+}
+
+/* ---------- 扩展加载错误诊断 ---------- */
+
+interface ExtensionLoadError {
+  path?: string;
+  error: string;
+}
+
+let lastExtensionLoadErrors: ExtensionLoadError[] = [];
+
+export function getExtensionLoadErrors(): ExtensionLoadError[] {
+  return lastExtensionLoadErrors;
 }
 
 /* ---------- 常驻小枢会话（带工具 + 全事件流式） ---------- */
