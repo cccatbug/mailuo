@@ -5,22 +5,46 @@ import {
   Cookie,
   Database,
   FolderOpen,
+  History as HistoryIcon,
+  Home,
   Import,
   LoaderCircle,
   RefreshCw,
+  Search,
   ShieldCheck,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { isSubmitKey } from "@/lib/keyboard";
 import {
   bridge,
   type BrowserSessionSnapshot,
 } from "@/lib/bridge";
+import {
+  BROWSER_SEARCH_ENGINES,
+  isBrowserSearchEngine,
+  type BrowserSearchEngine,
+} from "@/lib/browser-address";
 import { useAppStore } from "@/store/useAppStore";
+
+const SEARCH_ENGINE_LABELS: Record<BrowserSearchEngine, string> = {
+  google: "Google",
+  bing: "Bing",
+  baidu: "百度",
+  duckduckgo: "DuckDuckGo",
+};
 
 function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`;
@@ -31,18 +55,28 @@ function formatBytes(value: number): string {
 export function BrowserSettingsPane() {
   const { t } = useTranslation();
   const [snapshot, setSnapshot] = useState<BrowserSessionSnapshot | null>(null);
+  const [historyCount, setHistoryCount] = useState<number | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const customCss = useAppStore((state) => state.settings.browserCustomCss);
+  const homepage = useAppStore((state) => state.settings.browserHomepage);
+  const searchEngine = useAppStore((state) => state.settings.browserSearchEngine);
   const setSettings = useAppStore((state) => state.setSettings);
   const [cssDraft, setCssDraft] = useState(customCss);
+  const [homepageDraft, setHomepageDraft] = useState(homepage);
 
   useEffect(() => setCssDraft(customCss), [customCss]);
+  useEffect(() => setHomepageDraft(homepage), [homepage]);
 
   const refresh = useCallback(async () => {
     if (!bridge) return;
     setBusy("refresh");
     try {
-      setSnapshot(await bridge.getBrowserSession());
+      const [session, entries] = await Promise.all([
+        bridge.getBrowserSession(),
+        bridge.listBrowserHistory(),
+      ]);
+      setSnapshot(session);
+      setHistoryCount(entries.length);
     } catch (error) {
       toast.error("读取浏览器会话失败", { description: String(error) });
     } finally {
@@ -93,6 +127,28 @@ export function BrowserSettingsPane() {
     } finally {
       setBusy(null);
     }
+  };
+
+  const clearHistory = async () => {
+    if (!bridge) return;
+    if (!window.confirm(t("browser.clearHistoryConfirm"))) return;
+    setBusy("history");
+    try {
+      await bridge.clearBrowserHistory();
+      setHistoryCount(0);
+      toast.success(t("browser.clearHistoryDone"));
+    } catch (error) {
+      toast.error(t("browser.clearHistoryFailed"), { description: String(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const applyHomepage = () => {
+    setSettings({ browserHomepage: homepageDraft.trim() });
+    toast.success(homepageDraft.trim() ? "主页已更新" : "已恢复默认主页", {
+      description: "新打开的浏览器标签页会使用该网址。",
+    });
   };
 
   const applyCustomCss = async () => {
@@ -161,6 +217,111 @@ export function BrowserSettingsPane() {
           </Button>
           <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => void importCookies()}>
             <Import />从 Cookie JSON 导入
+          </Button>
+        </div>
+      </section>
+
+      <section className="overflow-hidden rounded-xl border bg-card">
+        <div className="flex items-center gap-3 border-b p-4">
+          <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <Home className="size-4" />
+          </div>
+          <div>
+            <p className="text-sm font-medium">
+              {t("browser.homepage")} 与 {t("browser.searchEngine")}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {t("browser.homepageDescription")} {t("browser.searchEngineDescription")}
+            </p>
+          </div>
+        </div>
+        <div className="space-y-4 p-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="browser-homepage">{t("browser.homepage")}</Label>
+            <Input
+              id="browser-homepage"
+              value={homepageDraft}
+              placeholder={t("browser.homepagePlaceholder")}
+              spellCheck={false}
+              onChange={(event) => setHomepageDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (
+                  (event.metaKey || event.ctrlKey) &&
+                  isSubmitKey(event, { allowShift: true })
+                ) {
+                  event.preventDefault();
+                  applyHomepage();
+                }
+              }}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>{t("browser.searchEngine")}</Label>
+            <Select
+              value={searchEngine}
+              onValueChange={(value) => {
+                if (isBrowserSearchEngine(value)) {
+                  setSettings({ browserSearchEngine: value });
+                  toast.success(`地址栏搜索已切换到 ${SEARCH_ENGINE_LABELS[value]}`);
+                }
+              }}
+            >
+              <SelectTrigger className="w-56" aria-label={t("browser.searchEngine")}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {BROWSER_SEARCH_ENGINES.map((engine) => (
+                  <SelectItem key={engine} value={engine}>
+                    <span className="flex items-center gap-2">
+                      <Search className="size-3.5 text-muted-foreground" />
+                      {SEARCH_ENGINE_LABELS[engine]}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-muted-foreground">
+              Ctrl/⌘ + Enter 应用
+            </span>
+            <Button
+              size="sm"
+              className="ml-auto"
+              disabled={homepageDraft.trim() === homepage}
+              onClick={applyHomepage}
+            >
+              <Check />
+              应用主页
+            </Button>
+          </div>
+        </div>
+      </section>
+
+      <section className="overflow-hidden rounded-xl border bg-card">
+        <div className="flex items-center gap-3 border-b p-4">
+          <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <HistoryIcon className="size-4" />
+          </div>
+          <div>
+            <p className="text-sm font-medium">{t("browser.history")}</p>
+            <p className="text-xs text-muted-foreground">
+              {t("browser.historyDescription")}
+            </p>
+          </div>
+          <span className="ml-auto text-xs text-muted-foreground">
+            {historyCount === null ? "—" : `${historyCount} 条`}
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 p-4">
+          <Button
+            variant="destructive"
+            size="sm"
+            disabled={busy !== null || !historyCount}
+            onClick={() => void clearHistory()}
+          >
+            {busy === "history" ? <LoaderCircle className="animate-spin" /> : <Trash2 />}
+            {t("browser.clearHistory")}
           </Button>
         </div>
       </section>

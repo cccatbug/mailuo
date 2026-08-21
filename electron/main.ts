@@ -54,6 +54,7 @@ import {
 } from "./model-discovery";
 import type { OneShotUseCase } from "../src/shared/ai-prompts";
 import {
+  batchAssetOp,
   emptyAssetTrash,
   importAssets,
   listProjectAssets,
@@ -84,6 +85,7 @@ import {
   isExternalBrowserProtocol,
 } from "./browser-session";
 import { BROWSER_RUNTIME } from "./browser-runtime";
+import { BROWSER_HISTORY } from "./browser-history";
 import { TASK_RUNTIME } from "./task-runtime";
 import { PROJECT_DB } from "./project-db";
 import type { AppDataSnapshot } from "../src/shared/project-db";
@@ -449,6 +451,21 @@ function registerIpc() {
     if (!result.canceled) await importAssets(projectId, result.filePaths);
     return listProjectAssets(projectId);
   });
+  ipcMain.handle("assets:import-paths", async (_e, projectId: string, paths: string[]) => {
+    if (!Array.isArray(paths)) throw new Error("导入路径无效");
+    await importAssets(projectId, paths.filter((item) => typeof item === "string"));
+    return listProjectAssets(projectId);
+  });
+  ipcMain.handle(
+    "assets:batch",
+    (
+      _e,
+      projectId: string,
+      action: "move" | "copy" | "trash" | "restore" | "delete",
+      ids: string[],
+      folder = ""
+    ) => batchAssetOp(projectId, action, Array.isArray(ids) ? ids : [], folder)
+  );
   ipcMain.handle("assets:reveal", async (_e, projectId: string, assetId: string) => {
     const { absolutePath } = await resolveAsset(projectId, assetId);
     shell.showItemInFolder(absolutePath);
@@ -556,6 +573,8 @@ function registerIpc() {
   ipcMain.handle("browser:custom-css:set", (_event, css: string) =>
     BROWSER_SESSION.setCustomCss(css)
   );
+  ipcMain.handle("browser:history:list", () => BROWSER_HISTORY.list());
+  ipcMain.handle("browser:history:clear", () => BROWSER_HISTORY.clear());
   ipcMain.handle("browser:tabs:list", () =>
     BROWSER_RUNTIME.control.listTabs()
   );
@@ -1276,7 +1295,7 @@ if (!app.requestSingleInstanceLock()) {
     if (browserDataFlushed) return;
     event.preventDefault();
     browserDataFlushed = true;
-    void BROWSER_SESSION.flush()
+    void Promise.all([BROWSER_SESSION.flush(), BROWSER_HISTORY.flush()])
       .catch(() => undefined)
       .finally(() => app.quit());
   });

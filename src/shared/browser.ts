@@ -15,6 +15,18 @@ export interface BrowserTabInfo {
   canGoForward: boolean;
 }
 
+/** 一条内置浏览器访问历史（主进程持久化，按 visitedAt 降序）。 */
+export interface BrowserHistoryEntry {
+  id: string;
+  url: string;
+  /** 去掉 www. 前缀的主机名，用于域名补全。 */
+  domain: string;
+  title: string;
+  visitedAt: number;
+  /** 同一 URL 累计访问次数（合并后自增）。 */
+  visitCount: number;
+}
+
 export interface BrowserTabRegistration {
   tabId: BrowserTabId;
   webContentsId: number;

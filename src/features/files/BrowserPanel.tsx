@@ -1,19 +1,32 @@
-import { createElement, useEffect, useRef, useState } from "react";
+import {
+  createElement,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ArrowLeft,
   ArrowRight,
   ExternalLink,
   Globe2,
+  History as HistoryIcon,
   LoaderCircle,
   MoreVertical,
   RefreshCw,
   Search,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { bridge } from "@/lib/bridge";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,6 +34,19 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { bridge } from "@/lib/bridge";
+import {
+  normalizeAddress,
+  isLikelyAddress,
+  type BrowserSearchEngine,
+} from "@/lib/browser-address";
+import {
+  formatRelativeTime,
+  suggestBrowserHistory,
+} from "@/lib/browser-history";
+import type { BrowserHistoryEntry } from "@/shared/browser";
+import { useAppStore } from "@/store/useAppStore";
+import { cn } from "@/lib/utils";
 import { shouldLoadBrowserAddress } from "./browser-navigation";
 
 interface MailuoWebview extends HTMLElement {
@@ -40,15 +66,16 @@ interface MailuoWebview extends HTMLElement {
   isDevToolsOpened(): boolean;
 }
 
-function normalizeAddress(value: string): string {
-  const input = value.trim();
-  if (!input) return "https://www.google.com";
-  if (/^[a-z][a-z\d+.-]*:/i.test(input)) return input;
-  if (/^(localhost|[\w-]+(?:\.[\w-]+)+)(:\d+)?(?:\/|$)/i.test(input)) {
-    return `https://${input}`;
-  }
-  return `https://www.google.com/search?q=${encodeURIComponent(input)}`;
-}
+const ENGINE_LABELS: Record<BrowserSearchEngine, string> = {
+  google: "Google",
+  bing: "Bing",
+  baidu: "百度",
+  duckduckgo: "DuckDuckGo",
+};
+
+type SuggestionItem =
+  | { kind: "history"; entry: BrowserHistoryEntry }
+  | { kind: "search"; url: string };
 
 export function BrowserPanel({
   tabId,
@@ -61,11 +88,15 @@ export function BrowserPanel({
   initialUrl?: string;
   onTitleChange?: (title: string) => void;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const homepage = useAppStore((s) => s.settings.browserHomepage);
+  const searchEngine = useAppStore((s) => s.settings.browserSearchEngine);
   const webviewRef = useRef<MailuoWebview | null>(null);
   // webview 的 src 只能用于首次导航。把网页自身导航写回 src 会触发重载，
   // 从而打断 CAS/OAuth 的 302、POST 和 window.opener 回跳链。
-  const initialUrlRef = useRef(normalizeAddress(initialUrl ?? "https://www.google.com"));
+  const initialUrlRef = useRef(
+    normalizeAddress(initialUrl ?? "", { homepage, searchEngine })
+  );
   const currentUrlRef = useRef(initialUrlRef.current);
   const [currentUrl, setCurrentUrl] = useState(initialUrlRef.current);
   const [address, setAddress] = useState(initialUrlRef.current);
@@ -73,8 +104,20 @@ export function BrowserPanel({
   const [canBack, setCanBack] = useState(false);
   const [canForward, setCanForward] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [history, setHistory] = useState<BrowserHistoryEntry[]>([]);
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  const refreshHistory = useCallback(() => {
+    void bridge
+      ?.listBrowserHistory()
+      .then(setHistory)
+      .catch(() => undefined);
+  }, []);
 
   useEffect(() => {
+    refreshHistory();
     const view = webviewRef.current;
     if (!view) return;
     let registeredWebContentsId: number | undefined;
@@ -141,6 +184,7 @@ export function BrowserPanel({
     const stop = (event: Event) => {
       setLoading(false);
       sync(event);
+      refreshHistory();
     };
     const navigated = (event: Event) => sync(event, true);
     const titleUpdated = (event: Event) => {
@@ -182,18 +226,102 @@ export function BrowserPanel({
         ?.unregisterBrowserTab(tabId, registeredWebContentsId)
         .catch(() => undefined);
     };
-  }, [tabId]);
+    // active/onTitleChange 只取挂载时的值：重挂监听会导致导航事件丢失
+  }, [tabId, refreshHistory]);
 
-  const navigate = () => {
-    const next = normalizeAddress(address);
-    const view = webviewRef.current;
-    const live = view?.getURL?.() || currentUrlRef.current || null;
-    const declared = view?.getAttribute?.("src") ?? null;
-    if (!shouldLoadBrowserAddress(next, live, declared)) return;
-    currentUrlRef.current = next;
-    setCurrentUrl(next);
-    setAddress(next);
-    void view?.loadURL(next);
+  const navigate = useCallback(
+    (raw?: string) => {
+      const next = normalizeAddress(raw ?? address, { homepage, searchEngine });
+      const view = webviewRef.current;
+      const live = view?.getURL?.() || currentUrlRef.current || null;
+      const declared = view?.getAttribute?.("src") ?? null;
+      if (!shouldLoadBrowserAddress(next, live, declared)) return;
+      currentUrlRef.current = next;
+      setCurrentUrl(next);
+      setAddress(next);
+      setSuggestOpen(false);
+      setActiveIndex(-1);
+      void view?.loadURL(next);
+    },
+    [address, homepage, searchEngine]
+  );
+
+  const suggestions = useMemo(
+    () => suggestBrowserHistory(history, address, 8),
+    [history, address]
+  );
+
+  const items = useMemo<SuggestionItem[]>(() => {
+    const list: SuggestionItem[] = suggestions.map((entry) => ({
+      kind: "history",
+      entry,
+    }));
+    const query = address.trim();
+    // 非网址输入时补一条「去搜索引擎搜索」的提示行
+    if (query && !isLikelyAddress(query)) {
+      list.push({
+        kind: "search",
+        url: normalizeAddress(query, { homepage, searchEngine }),
+      });
+    }
+    return list;
+  }, [suggestions, address, homepage, searchEngine]);
+
+  const pickItem = (item: SuggestionItem) => {
+    navigate(item.kind === "history" ? item.entry.url : item.url);
+  };
+
+  const onAddressKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      if (!suggestOpen) {
+        setSuggestOpen(true);
+        setActiveIndex(0);
+        return;
+      }
+      setActiveIndex((index) =>
+        items.length === 0 ? -1 : (index + 1) % items.length
+      );
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      if (!suggestOpen) {
+        setSuggestOpen(true);
+        setActiveIndex(items.length - 1);
+        return;
+      }
+      setActiveIndex((index) =>
+        items.length === 0 ? -1 : (index - 1 + items.length) % items.length
+      );
+    } else if (event.key === "Escape") {
+      if (suggestOpen) {
+        event.preventDefault();
+        setSuggestOpen(false);
+        setActiveIndex(-1);
+        setAddress(currentUrlRef.current);
+      }
+    } else if (event.key === "Enter") {
+      if (suggestOpen && activeIndex >= 0 && items[activeIndex]) {
+        event.preventDefault();
+        pickItem(items[activeIndex]);
+      }
+    }
+  };
+
+  const clearHistory = () => {
+    if (!window.confirm(t("browser.clearHistoryConfirm"))) return;
+    void bridge
+      ?.clearBrowserHistory()
+      .then(() => {
+        setHistory([]);
+        setSuggestOpen(false);
+        setActiveIndex(-1);
+        toast.success(t("browser.clearHistoryDone"));
+      })
+      .catch((error) => {
+        toast.error(t("browser.clearHistoryFailed"), {
+          description: String(error),
+        });
+      });
   };
 
   return (
@@ -220,9 +348,68 @@ export function BrowserPanel({
             value={address}
             className="h-7 rounded-full bg-muted/50 pr-8 pl-8 text-xs"
             aria-label={t("browser.address")}
-            onChange={(event) => setAddress(event.target.value)}
+            onFocus={(event) => {
+              event.target.select();
+              setSuggestOpen(true);
+            }}
+            onBlur={() => {
+              setSuggestOpen(false);
+              setActiveIndex(-1);
+            }}
+            onChange={(event) => {
+              setAddress(event.target.value);
+              setSuggestOpen(true);
+              setActiveIndex(-1);
+            }}
+            onKeyDown={onAddressKeyDown}
           />
           <Search className="pointer-events-none absolute top-1/2 right-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          {suggestOpen && items.length > 0 && (
+            <div className="absolute inset-x-0 top-full z-50 mt-1.5 overflow-hidden rounded-lg border bg-popover text-popover-foreground shadow-md">
+              <div className="max-h-72 overflow-y-auto py-1">
+                {items.map((item, index) => (
+                  <button
+                    key={item.kind === "history" ? item.entry.id : "search"}
+                    type="button"
+                    className={cn(
+                      "flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-xs transition-colors",
+                      index === activeIndex && "bg-accent text-accent-foreground"
+                    )}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onMouseEnter={() => setActiveIndex(index)}
+                    onClick={() => pickItem(item)}
+                  >
+                    {item.kind === "history" ? (
+                      <>
+                        <Globe2 className="size-3.5 shrink-0 text-muted-foreground" />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate font-medium">
+                            {item.entry.title || item.entry.domain}
+                          </span>
+                          <span className="block truncate text-muted-foreground">
+                            {item.entry.url}
+                          </span>
+                        </span>
+                        <span className="shrink-0 text-[10px] text-muted-foreground">
+                          {formatRelativeTime(item.entry.visitedAt, i18n.language)}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <Search className="size-3.5 shrink-0 text-muted-foreground" />
+                        <span className="min-w-0 flex-1 truncate">
+                          {t("browser.searchFor", {
+                            engine: ENGINE_LABELS[searchEngine],
+                            query: address.trim(),
+                          })}
+                        </span>
+                      </>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </form>
         <Button
           variant="ghost"
@@ -232,6 +419,62 @@ export function BrowserPanel({
         >
           <ExternalLink />
         </Button>
+        <Popover open={historyOpen} onOpenChange={setHistoryOpen}>
+          <PopoverTrigger asChild>
+            <Button variant="ghost" size="icon-sm" title={t("browser.history")}>
+              <HistoryIcon />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-80 p-0">
+            <div className="border-b px-3 py-2 text-xs font-medium text-muted-foreground">
+              {t("browser.history")}
+            </div>
+            {history.length === 0 ? (
+              <div className="px-3 py-8 text-center text-xs text-muted-foreground">
+                {t("browser.historyEmpty")}
+              </div>
+            ) : (
+              <div className="max-h-72 overflow-y-auto py-1">
+                {history.slice(0, 12).map((entry) => (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-xs transition-colors hover:bg-accent"
+                    onClick={() => {
+                      setHistoryOpen(false);
+                      pickItem({ kind: "history", entry });
+                    }}
+                  >
+                    <Globe2 className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium">
+                        {entry.title || entry.domain}
+                      </span>
+                      <span className="block truncate text-muted-foreground">
+                        {entry.domain}
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-[10px] text-muted-foreground">
+                      {formatRelativeTime(entry.visitedAt, i18n.language)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="border-t p-1.5">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full justify-start text-destructive hover:text-destructive"
+                disabled={history.length === 0}
+                onClick={clearHistory}
+              >
+                <Trash2 />
+                {t("browser.clearHistory")}
+              </Button>
+            </div>
+          </PopoverContent>
+        </Popover>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon-sm" title={t("browser.tools")}>

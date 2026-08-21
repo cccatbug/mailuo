@@ -10,6 +10,7 @@ vi.mock("./pi", () => ({
 
 import {
   assignAssetTags,
+  batchAssetOp,
   createAssetTag,
   createProjectFile,
   createProjectFolder,
@@ -56,5 +57,49 @@ describe("asset-store", () => {
     await trashProjectFolder("project", "设计/发布");
     library = await listAssetLibrary("project");
     expect(library.assets.every((item) => item.trashed)).toBe(true);
+  });
+
+  it("batches move / copy / trash / restore / delete in one index write", async () => {
+    await createProjectFolder("project", "素材");
+    const first = await createProjectFile("project", "", "a.txt", "a");
+    const second = await createProjectFile("project", "", "b.md", "b");
+
+    await batchAssetOp("project", "move", [first.id, second.id], "素材");
+    let library = await listAssetLibrary("project");
+    expect(
+      library.assets.map((item) => item.relativePath.replace(/\\/g, "/")).sort()
+    ).toEqual(["素材/a.txt", "素材/b.md"]);
+
+    await batchAssetOp("project", "copy", [first.id], "素材");
+    library = await listAssetLibrary("project");
+    expect(library.assets).toHaveLength(3);
+    expect(library.assets.some((item) => item.name === "a 副本.txt")).toBe(true);
+
+    await batchAssetOp("project", "trash", [first.id, second.id]);
+    library = await listAssetLibrary("project");
+    expect(library.assets.filter((item) => item.trashed)).toHaveLength(2);
+
+    await batchAssetOp("project", "restore", [first.id]);
+    library = await listAssetLibrary("project");
+    const restored = library.assets.find((item) => item.id === first.id);
+    expect(restored?.trashed).toBe(false);
+    expect(restored?.relativePath.replace(/\\/g, "/")).toMatch(/^restored\//);
+
+    await batchAssetOp("project", "delete", [second.id]);
+    library = await listAssetLibrary("project");
+    expect(library.assets.some((item) => item.id === second.id)).toBe(false);
+  });
+
+  it("rejects a batch move when a destination name collides", async () => {
+    await createProjectFolder("project", "素材");
+    const source = await createProjectFile("project", "", "a.txt", "a");
+    await createProjectFile("project", "素材", "a.txt", "existing");
+
+    await expect(batchAssetOp("project", "move", [source.id], "素材")).rejects.toThrow(
+      "已有同名文件"
+    );
+    // 冲突时整批不落地：源文件仍在原位
+    const library = await listAssetLibrary("project");
+    expect(library.assets.find((item) => item.id === source.id)?.relativePath).toBe("a.txt");
   });
 });

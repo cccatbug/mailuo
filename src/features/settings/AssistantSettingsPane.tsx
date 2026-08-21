@@ -26,7 +26,8 @@ import {
 import { useAppStore } from "@/store/useAppStore";
 import type { AssistantPermissionMode } from "@/shared/assistant";
 
-export function AssistantSettingsPane() {
+/** 权限与行为设置内容（供独立面板与统一「小枢」面板复用）。 */
+export function AssistantPermissionsSection() {
   const { t } = useTranslation();
   const mode = useAppStore(
     (state) => state.settings.assistantPermissionMode
@@ -34,16 +35,7 @@ export function AssistantSettingsPane() {
   const setSettings = useAppStore((state) => state.setSettings);
 
   return (
-    <div className="flex flex-col gap-6">
-      <div>
-        <h2 className="font-heading text-xl font-bold">
-          {t("assistant.settingsTitle")}
-        </h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {t("assistant.settingsDescription")}
-        </p>
-      </div>
-
+    <div className="flex flex-col gap-4">
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -122,6 +114,23 @@ export function AssistantSettingsPane() {
           </div>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+export function AssistantSettingsPane() {
+  const { t } = useTranslation();
+  return (
+    <div className="flex flex-col gap-6">
+      <div>
+        <h2 className="font-heading text-xl font-bold">
+          {t("assistant.settingsTitle")}
+        </h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {t("assistant.settingsDescription")}
+        </p>
+      </div>
+      <AssistantPermissionsSection />
     </div>
   );
 }

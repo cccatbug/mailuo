@@ -17,6 +17,10 @@ import {
   type ThemePalette,
 } from "@/lib/theme";
 import type { AssistantPermissionMode } from "@/shared/assistant";
+import {
+  isBrowserSearchEngine,
+  type BrowserSearchEngine,
+} from "@/lib/browser-address";
 import { quoteFontFamily } from "@/lib/system-fonts";
 import {
   normalizeTaskTracking,
@@ -49,6 +53,10 @@ export interface AppSettings {
   appFontFamily: string;
   /** 注入内置浏览器所有页面的用户 CSS。 */
   browserCustomCss: string;
+  /** 内置浏览器主页；空字符串使用默认主页。 */
+  browserHomepage: string;
+  /** 内置浏览器地址栏搜索使用的引擎。 */
+  browserSearchEngine: BrowserSearchEngine;
   locale: Locale;
   /** 小枢对文件、命令与浏览器操作的全局授权方式。 */
   assistantPermissionMode: AssistantPermissionMode;
@@ -257,6 +265,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   fontHeading: "serif",
   appFontFamily: "",
   browserCustomCss: "",
+  browserHomepage: "",
+  browserSearchEngine: "google",
   locale: "zh-CN",
   assistantPermissionMode: "confirm-sensitive",
 };
@@ -288,6 +298,11 @@ function loadSettings(): AppSettings {
         typeof stored.appFontFamily === "string" ? stored.appFontFamily : "",
       browserCustomCss:
         typeof stored.browserCustomCss === "string" ? stored.browserCustomCss : "",
+      browserHomepage:
+        typeof stored.browserHomepage === "string" ? stored.browserHomepage : "",
+      browserSearchEngine: isBrowserSearchEngine(stored.browserSearchEngine)
+        ? stored.browserSearchEngine
+        : DEFAULT_SETTINGS.browserSearchEngine,
       locale: stored.locale === "en" ? "en" : "zh-CN",
       assistantPermissionMode,
     };

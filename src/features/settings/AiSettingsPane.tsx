@@ -60,7 +60,13 @@ import {
   type PromptTemplate,
 } from "@/features/ai/promptTemplates";
 
-type AiSection = "providers" | "models" | "routes" | "prompts" | "context" | "network";
+export type AiSection =
+  | "providers"
+  | "models"
+  | "routes"
+  | "prompts"
+  | "context"
+  | "network";
 
 const USE_CASE_LABELS: Record<AiUseCase, string> = {
   assistant: "助手",
@@ -201,6 +207,38 @@ const SECTION_ITEMS: Array<{
   { key: "network", label: "网络", icon: Network },
 ];
 
+/** 供统一「小枢」设置面板复用的分节清单。 */
+export const AI_SECTION_ITEMS = SECTION_ITEMS;
+
+/**
+ * AI 配置草稿：负责加载 config.json、维护可编辑草稿与保存。
+ * Provider / 模型 / 路由 / 上下文 / 网络 各子面板共享同一份草稿。
+ */
+export function useAiConfigDraft() {
+  const snapshot = useAiConfigStore((state) => state.snapshot);
+  const loading = useAiConfigStore((state) => state.loading);
+  const error = useAiConfigStore((state) => state.error);
+  const load = useAiConfigStore((state) => state.load);
+  const reload = useAiConfigStore((state) => state.reload);
+  const save = useAiConfigStore((state) => state.save);
+  const [config, setConfig] = useState<AiConfigV1 | null>(null);
+
+  useEffect(() => {
+    void load().catch(() => undefined);
+  }, [load]);
+  useEffect(() => {
+    if (snapshot) setConfig(structuredClone(snapshot.config));
+  }, [snapshot]);
+
+  const saveConfig = async (nextConfig = config) => {
+    if (!nextConfig) throw new Error("配置尚未加载");
+    const next = await save(nextConfig);
+    setConfig(structuredClone(next.config));
+  };
+
+  return { loading, error, config, setConfig, saveConfig, reload };
+}
+
 function createProvider(preset: AiProviderPreset): AiProviderConfig {
   const defaults = PRESETS[preset];
   return {
@@ -315,7 +353,7 @@ function NumberInput({
   );
 }
 
-function ProviderPane({
+export function ProviderPane({
   config,
   setConfig,
   onSave,
@@ -1143,7 +1181,7 @@ function modelFromDiscovery(
   };
 }
 
-function ModelsPane({
+export function ModelsPane({
   config,
   setConfig,
   onSave,
@@ -1534,7 +1572,7 @@ function ModelsPane({
   );
 }
 
-function RoutesPane({
+export function RoutesPane({
   config,
   setConfig,
   onSave,
@@ -1676,7 +1714,7 @@ function RoutesPane({
   );
 }
 
-function ContextPane({
+export function ContextPane({
   config,
   setConfig,
   onSave,
@@ -1990,7 +2028,7 @@ function ContextPane({
   );
 }
 
-function NetworkPane({
+export function NetworkPane({
   config,
   setConfig,
   onSave,
@@ -2053,7 +2091,7 @@ const PROMPT_KIND_LABEL: Record<PromptKind, string> = {
   "notes-polish": "备注润色",
 };
 
-function PromptTemplatesPane() {
+export function PromptTemplatesPane() {
   const [items, setItems] = useState<PromptTemplate[]>(loadPromptTemplates);
   const [query, setQuery] = useState("");
   const persist = (next: PromptTemplate[]) => {
@@ -2099,27 +2137,9 @@ function PromptTemplatesPane() {
 }
 
 export function AiSettingsPane() {
-  const snapshot = useAiConfigStore((state) => state.snapshot);
-  const loading = useAiConfigStore((state) => state.loading);
-  const error = useAiConfigStore((state) => state.error);
-  const load = useAiConfigStore((state) => state.load);
-  const reload = useAiConfigStore((state) => state.reload);
-  const save = useAiConfigStore((state) => state.save);
+  const { loading, error, config, setConfig, saveConfig, reload } =
+    useAiConfigDraft();
   const [section, setSection] = useState<AiSection>("providers");
-  const [config, setConfig] = useState<AiConfigV1 | null>(null);
-
-  useEffect(() => {
-    void load().catch(() => undefined);
-  }, [load]);
-  useEffect(() => {
-    if (snapshot) setConfig(structuredClone(snapshot.config));
-  }, [snapshot]);
-
-  const saveConfig = async (nextConfig = config) => {
-    if (!nextConfig) throw new Error("配置尚未加载");
-    const next = await save(nextConfig);
-    setConfig(structuredClone(next.config));
-  };
 
   if (loading && !config) {
     return (

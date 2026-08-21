@@ -271,7 +271,7 @@ export async function openMemoryFile() {
   useAppStore.getState().setSettingsOpen(true);
   queueMicrotask(() => {
     window.dispatchEvent(
-      new CustomEvent("mailuo-open-settings-pane", { detail: "memory" })
+      new CustomEvent("mailuo-open-settings-pane", { detail: "shu:memory" })
     );
   });
 }

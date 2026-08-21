@@ -9,6 +9,7 @@ import {
   type BrowserControlWebContents,
 } from "./browser-control";
 import { BROWSER_PARTITION } from "./browser-session";
+import { BROWSER_HISTORY } from "./browser-history";
 import { safeSendToWindow } from "./window-lifecycle";
 import type {
   BrowserAgentMode,
@@ -99,6 +100,10 @@ class BrowserRuntime {
 
   updateTab(tabId: string, update: BrowserTabUpdate): BrowserTabInfo | null {
     const info = this.control.updateTab(tabId, update);
+    // 主框架导航（含重定向与页内导航）落地为历史；about:/chrome-error: 等会被规范化拒绝。
+    if (update.navigation === true && typeof update.url === "string") {
+      void BROWSER_HISTORY.add(update.url, update.title ?? "");
+    }
     this.broadcastTabs();
     return info;
   }

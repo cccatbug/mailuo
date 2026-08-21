@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type {
   AssistantApprovalResponse,
   AssistantAttachmentPayload,
@@ -29,6 +29,7 @@ import type {
   BrowserAgentMode,
   BrowserApprovalRequest,
   BrowserApprovalResponse,
+  BrowserHistoryEntry,
   BrowserTabCommand,
   BrowserTabInfo,
   BrowserTabRegistration,
@@ -317,6 +318,16 @@ const api = {
     ipcRenderer.invoke("assets:empty-trash", projectId),
   importAssets: (projectId: string): Promise<AssetRecord[]> =>
     ipcRenderer.invoke("assets:import", projectId),
+  importAssetPaths: (projectId: string, paths: string[]): Promise<AssetRecord[]> =>
+    ipcRenderer.invoke("assets:import-paths", projectId, paths),
+  batchAssets: (
+    projectId: string,
+    action: "move" | "copy" | "trash" | "restore" | "delete",
+    ids: string[],
+    folder = ""
+  ): Promise<void> => ipcRenderer.invoke("assets:batch", projectId, action, ids, folder),
+  /** 系统文件管理器拖入的文件 → 绝对路径（供导入用）。 */
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   revealAsset: (projectId: string, assetId: string): Promise<void> =>
     ipcRenderer.invoke("assets:reveal", projectId, assetId),
   getBrowserSession: () =>
@@ -348,6 +359,10 @@ const api = {
     ipcRenderer.invoke("browser:clear-data", scope),
   setBrowserCustomCss: (css: string): Promise<void> =>
     ipcRenderer.invoke("browser:custom-css:set", css),
+  listBrowserHistory: (): Promise<BrowserHistoryEntry[]> =>
+    ipcRenderer.invoke("browser:history:list"),
+  clearBrowserHistory: (): Promise<void> =>
+    ipcRenderer.invoke("browser:history:clear"),
   listBrowserTabs: (): Promise<BrowserTabInfo[]> =>
     ipcRenderer.invoke("browser:tabs:list"),
   registerBrowserTab: (

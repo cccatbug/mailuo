@@ -3,6 +3,13 @@ import { BrainCircuit, RefreshCw, Save, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
   AlertDialog,
@@ -106,23 +113,28 @@ function EntryEditor({
       />
 
       <div className="mt-2 flex flex-wrap items-center gap-2">
-        <select
-          value={kind}
-          className="h-8 rounded-lg border bg-background px-2 text-xs"
-          onChange={(event) => setKind(event.target.value as MemoryKind)}
-        >
-          {Object.entries(KIND_LABEL).map(([value, label]) => (
-            <option key={value} value={value}>{label}</option>
-          ))}
-        </select>
-        <select
+        <Select value={kind} onValueChange={(value) => setKind(value as MemoryKind)}>
+          <SelectTrigger size="sm" className="w-28" aria-label="记忆类型">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {Object.entries(KIND_LABEL).map(([value, label]) => (
+              <SelectItem key={value} value={value}>{label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select
           value={scopeType}
-          className="h-8 rounded-lg border bg-background px-2 text-xs"
-          onChange={(event) => setScopeType(event.target.value as MemoryScope["type"])}
+          onValueChange={(value) => setScopeType(value as MemoryScope["type"])}
         >
-          <option value="global">全局</option>
-          <option value="project">项目</option>
-        </select>
+          <SelectTrigger size="sm" className="w-24" aria-label="记忆范围">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="global">全局</SelectItem>
+            <SelectItem value="project">项目</SelectItem>
+          </SelectContent>
+        </Select>
         <Button size="sm" disabled={saving || !content.trim()} onClick={() => void save()}>
           <Save />{saving ? "保存中" : "保存"}
         </Button>
@@ -236,16 +248,20 @@ export function MemorySettingsPane() {
       )}
 
       <div className="flex flex-wrap items-center gap-2">
-        <select
+        <Select
           value={filter}
-          className="h-8 rounded-lg border bg-background px-2 text-xs"
-          onChange={(event) => setFilter(event.target.value as typeof filter)}
+          onValueChange={(value) => setFilter(value as typeof filter)}
         >
-          <option value="all">全部类型</option>
-          {Object.entries(KIND_LABEL).map(([value, label]) => (
-            <option key={value} value={value}>{label}</option>
-          ))}
-        </select>
+          <SelectTrigger size="sm" className="w-32" aria-label="记忆筛选">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">全部类型</SelectItem>
+            {Object.entries(KIND_LABEL).map(([value, label]) => (
+              <SelectItem key={value} value={value}>{label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <span className="text-xs text-muted-foreground">
           {entries.length} 条有效记忆
         </span>

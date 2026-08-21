@@ -28,6 +28,7 @@ import type {
   BrowserAgentMode,
   BrowserApprovalRequest,
   BrowserApprovalResponse,
+  BrowserHistoryEntry,
   BrowserTabCommand,
   BrowserTabInfo,
   BrowserTabRegistration,
@@ -206,6 +207,15 @@ export interface MailuoApi {
   restoreAsset: (projectId: string, assetId: string) => Promise<void>;
   emptyAssetTrash: (projectId: string) => Promise<void>;
   importAssets: (projectId: string) => Promise<AssetRecord[]>;
+  importAssetPaths: (projectId: string, paths: string[]) => Promise<AssetRecord[]>;
+  batchAssets: (
+    projectId: string,
+    action: "move" | "copy" | "trash" | "restore" | "delete",
+    ids: string[],
+    folder?: string
+  ) => Promise<void>;
+  /** 系统文件管理器拖入的文件 → 绝对路径（供导入用）。 */
+  getPathForFile: (file: File) => string;
   revealAsset: (projectId: string, assetId: string) => Promise<void>;
   getBrowserSession: () => Promise<BrowserSessionSnapshot>;
   flushBrowserSession: () => Promise<void>;
@@ -218,6 +228,8 @@ export interface MailuoApi {
   onBrowserOpenTab: (handler: (url: string) => void) => () => void;
   clearBrowserData: (scope?: "cookies" | "all") => Promise<void>;
   setBrowserCustomCss: (css: string) => Promise<void>;
+  listBrowserHistory: () => Promise<BrowserHistoryEntry[]>;
+  clearBrowserHistory: () => Promise<void>;
   listBrowserTabs: () => Promise<BrowserTabInfo[]>;
   registerBrowserTab: (
     registration: BrowserTabRegistration

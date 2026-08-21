@@ -516,6 +516,140 @@ export async function permanentlyDeleteAsset(
   await writeIndex(index);
 }
 
+/* ---------- 批量操作：一次读索引、一次写索引，多选时避免逐文件 IPC ---------- */
+
+export async function moveAssets(
+  projectId: string,
+  assetIds: string[],
+  folder: string
+): Promise<void> {
+  const index = await readIndex();
+  const selected = new Set(assetIds);
+  const destination = normalizeRelative(folder);
+  // 先整体校验目标冲突，再统一执行，避免移动到一半才报错
+  for (const asset of index.assets) {
+    if (asset.projectId !== projectId || !selected.has(asset.id) || asset.trashed) continue;
+    const nextRelative = path.join(destination, asset.name);
+    if (path.normalize(nextRelative) === path.normalize(asset.relativePath)) continue;
+    if (await pathExists(inProject(projectId, nextRelative))) {
+      throw new Error(`目标文件夹中已有同名文件：${asset.name}`);
+    }
+  }
+  if (destination) await fs.mkdir(inProject(projectId, destination), { recursive: true });
+  for (const asset of index.assets) {
+    if (asset.projectId !== projectId || !selected.has(asset.id) || asset.trashed) continue;
+    const nextRelative = path.join(destination, asset.name);
+    if (path.normalize(nextRelative) === path.normalize(asset.relativePath)) continue;
+    await fs.rename(
+      inProject(projectId, asset.relativePath),
+      inProject(projectId, nextRelative)
+    );
+    asset.relativePath = nextRelative;
+  }
+  await writeIndex(index);
+}
+
+export async function copyAssets(
+  projectId: string,
+  assetIds: string[],
+  folder: string
+): Promise<void> {
+  const destination = normalizeRelative(folder);
+  if (destination) await fs.mkdir(inProject(projectId, destination), { recursive: true });
+  const assets = await listProjectAssets(projectId);
+  const byId = new Map(
+    assets.filter((asset) => !asset.trashed).map((asset) => [asset.id, asset])
+  );
+  for (const assetId of assetIds) {
+    const asset = byId.get(assetId);
+    if (!asset) continue;
+    const target = await uniqueRelativePath(projectId, destination, asset.name);
+    await fs.copyFile(
+      inProject(projectId, asset.relativePath),
+      inProject(projectId, target)
+    );
+  }
+  await listProjectAssets(projectId);
+}
+
+export async function trashAssets(projectId: string, assetIds: string[]): Promise<void> {
+  const index = await readIndex();
+  const selected = new Set(assetIds);
+  const trashRoot = inProject(projectId, ".trash");
+  await fs.mkdir(trashRoot, { recursive: true });
+  for (const asset of index.assets) {
+    if (asset.projectId !== projectId || !selected.has(asset.id) || asset.trashed) continue;
+    await fs.rename(
+      inProject(projectId, asset.relativePath),
+      inProject(projectId, path.join(".trash", `${asset.id}-${asset.name}`))
+    );
+    asset.trashed = true;
+  }
+  await writeIndex(index);
+}
+
+export async function restoreAssets(projectId: string, assetIds: string[]): Promise<void> {
+  const index = await readIndex();
+  const selected = new Set(assetIds);
+  await fs.mkdir(inProject(projectId, "restored"), { recursive: true });
+  for (const asset of index.assets) {
+    if (asset.projectId !== projectId || !selected.has(asset.id) || !asset.trashed) continue;
+    let nextRelative = path.join("restored", asset.name);
+    try {
+      await fs.access(inProject(projectId, nextRelative));
+      nextRelative = path.join("restored", `${Date.now()}-${asset.name}`);
+    } catch {
+      // 目标可用
+    }
+    const trashRelative = path.join(".trash", `${asset.id}-${asset.name}`);
+    await fs.rename(inProject(projectId, trashRelative), inProject(projectId, nextRelative));
+    asset.relativePath = nextRelative;
+    asset.trashed = false;
+  }
+  await writeIndex(index);
+}
+
+export async function permanentlyDeleteAssets(
+  projectId: string,
+  assetIds: string[]
+): Promise<void> {
+  const index = await readIndex();
+  const selected = new Set(assetIds);
+  for (const asset of index.assets) {
+    if (asset.projectId !== projectId || !selected.has(asset.id)) continue;
+    await fs.rm(inProject(projectId, path.join(".trash", `${asset.id}-${asset.name}`)), {
+      force: true,
+    });
+  }
+  index.assets = index.assets.filter(
+    (entry) => entry.projectId !== projectId || !selected.has(entry.id)
+  );
+  await writeIndex(index);
+}
+
+export type AssetBatchAction =
+  | "move"
+  | "copy"
+  | "trash"
+  | "restore"
+  | "delete";
+
+/** 多选操作统一入口：一次调用完成整批，出错即整体失败并保持索引一致。 */
+export async function batchAssetOp(
+  projectId: string,
+  action: AssetBatchAction,
+  assetIds: string[],
+  folder = ""
+): Promise<void> {
+  const ids = [...new Set(assetIds)];
+  if (ids.length === 0) return;
+  if (action === "move") await moveAssets(projectId, ids, folder);
+  else if (action === "copy") await copyAssets(projectId, ids, folder);
+  else if (action === "trash") await trashAssets(projectId, ids);
+  else if (action === "restore") await restoreAssets(projectId, ids);
+  else await permanentlyDeleteAssets(projectId, ids);
+}
+
 export async function createAssetTag(
   projectId: string,
   name: string,

@@ -1,11 +1,7 @@
 import { useEffect, useState } from "react";
 import {
-  BookOpen,
   Bot,
-  BrainCircuit,
   Copy,
-  Code2,
-  Cpu,
   Database,
   FolderOpen,
   Globe2,
@@ -52,11 +48,12 @@ import { hasNative } from "@/lib/platform";
 import { useAppStore } from "@/store/useAppStore";
 import type { ThemeMode, ThemePalette } from "@/lib/theme";
 import { seedData } from "@/store/seed";
-import { AiSettingsPane } from "./AiSettingsPane";
-import { PiResourcesPane } from "./PiResourcesPane";
 import { BrowserSettingsPane } from "./BrowserSettingsPane";
-import { AssistantSettingsPane } from "./AssistantSettingsPane";
-import { MemorySettingsPane } from "./MemorySettingsPane";
+import {
+  isShuSection,
+  ShuSettingsPane,
+  type ShuSection,
+} from "./ShuSettingsPane";
 import { SystemFontPicker } from "./SystemFontPicker";
 import packageInfo from "../../../package.json";
 
@@ -378,50 +375,66 @@ function AboutPane() {
 
 /* ---------- 主对话框：左导航 + 右内容（Obsidian 式浮空模态框） ---------- */
 
-function ExtensionsPane() {
-  return <PiResourcesPane kind="extension" />;
-}
-
-function SkillsPane() {
-  return <PiResourcesPane kind="skill" />;
-}
-
 const PANES = [
   { key: "appearance", label: "外观", icon: Palette, pane: AppearancePane },
-  { key: "ai", label: "AI", icon: Cpu, pane: AiSettingsPane },
-  { key: "pi-extensions", label: "扩展", icon: Code2, pane: ExtensionsPane },
-  { key: "pi-skills", label: "技能", icon: BookOpen, pane: SkillsPane },
-  { key: "assistant", label: "小枢", icon: Bot, pane: AssistantSettingsPane },
-  { key: "memory", label: "记忆", icon: BrainCircuit, pane: MemorySettingsPane },
+  { key: "shu", label: "小枢", icon: Bot },
   { key: "browser", label: "浏览器", icon: Globe2, pane: BrowserSettingsPane },
   { key: "data", label: "数据", icon: Database, pane: DataPane },
   { key: "about", label: "关于", icon: Info, pane: AboutPane },
 ] as const;
 
+type PaneKey = (typeof PANES)[number]["key"];
+
+/** v0.25 之前的独立入口 → 统一「小枢」面板的分节。 */
+const LEGACY_PANE_TO_SECTION: Record<string, ShuSection> = {
+  ai: "providers",
+  "pi-extensions": "extensions",
+  "pi-skills": "skills",
+  assistant: "permissions",
+  memory: "memory",
+};
+
 export function SettingsDialog() {
   const open = useAppStore((s) => s.settingsOpen);
   const setOpen = useAppStore((s) => s.setSettingsOpen);
-  const [active, setActive] = useState<(typeof PANES)[number]["key"]>("appearance");
+  const [active, setActive] = useState<PaneKey>("appearance");
+  const [shuSection, setShuSection] = useState<ShuSection>("permissions");
 
   useEffect(() => {
     const openPane = (event: Event) => {
-      const key = (event as CustomEvent<string>).detail;
-      if (PANES.some((pane) => pane.key === key)) {
-        setActive(key as (typeof PANES)[number]["key"]);
+      const detail = String((event as CustomEvent<string>).detail);
+      // 新格式：shu 或 shu:<section>
+      if (detail === "shu" || detail.startsWith("shu:")) {
+        setActive("shu");
+        const section = detail.split(":")[1] as ShuSection | undefined;
+        if (section && isShuSection(section)) setShuSection(section);
+        return;
+      }
+      // 旧入口（ai / pi-extensions / pi-skills / assistant / memory）映射到小枢分节
+      const legacy = LEGACY_PANE_TO_SECTION[detail];
+      if (legacy) {
+        setActive("shu");
+        setShuSection(legacy);
+        return;
+      }
+      if (PANES.some((pane) => pane.key === detail)) {
+        setActive(detail as PaneKey);
       }
     };
     window.addEventListener("mailuo-open-settings-pane", openPane);
     return () => window.removeEventListener("mailuo-open-settings-pane", openPane);
   }, []);
 
-  const ActivePane = PANES.find((p) => p.key === active)?.pane ?? AppearancePane;
+  const activeItem = PANES.find((p) => p.key === active);
+  const ActivePane =
+    activeItem && "pane" in activeItem ? activeItem.pane : AppearancePane;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="flex h-[82vh] gap-0 overflow-hidden p-0 sm:max-w-5xl">
         <DialogHeader className="sr-only">
           <DialogTitle>设置</DialogTitle>
-          <DialogDescription>外观、AI 与数据管理。</DialogDescription>
+          <DialogDescription>外观、小枢与数据管理。</DialogDescription>
         </DialogHeader>
 
         <nav className="flex w-44 shrink-0 flex-col gap-0.5 overflow-y-auto border-r bg-sidebar/60 p-3">
@@ -446,7 +459,14 @@ export function SettingsDialog() {
         </nav>
 
         <div className="min-w-0 flex-1 overflow-y-auto px-7 py-6">
-          <ActivePane />
+          {active === "shu" ? (
+            <ShuSettingsPane
+              section={shuSection}
+              onSectionChange={setShuSection}
+            />
+          ) : (
+            <ActivePane />
+          )}
         </div>
       </DialogContent>
     </Dialog>

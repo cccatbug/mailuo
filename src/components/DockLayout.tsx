@@ -69,6 +69,7 @@ import { useAppStore, type ViewMode } from "@/store/useAppStore";
 import { useScheduledTasksStore } from "@/store/useScheduledTasksStore";
 import { useProjectDbStore } from "@/store/useProjectDbStore";
 import { bridge } from "@/lib/bridge";
+import { DEFAULT_HOMEPAGE } from "@/lib/browser-address";
 import { closeDockPanels } from "./dock-menu";
 import {
   getDockPanelRenderer,
@@ -169,11 +170,13 @@ export function openFilePanel(
 }
 
 /** 打开基于 Electron Chromium webview 的原生网页标签。 */
-export function openBrowserPanel(
-  url = "https://www.google.com"
-): string | null {
+export function openBrowserPanel(url?: string): string | null {
   const api = dockRef.api;
   if (!api) return null;
+  const target =
+    url?.trim() ||
+    useAppStore.getState().settings.browserHomepage?.trim() ||
+    DEFAULT_HOMEPAGE;
   const id = `browser:${crypto.randomUUID()}`;
   api.addPanel({
     id,
@@ -181,7 +184,7 @@ export function openBrowserPanel(
     renderer: getDockPanelRenderer("browser"),
     title: "浏览器",
     minimumWidth: 420,
-    params: { url },
+    params: { url: target },
     position: {
       referencePanel: api.getPanel("tasks") ? "tasks" : undefined as never,
       direction: "within",
